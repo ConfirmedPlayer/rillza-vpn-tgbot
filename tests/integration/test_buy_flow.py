@@ -1,0 +1,173 @@
+"""The purchase flow as the user walks it."""
+
+import pytest
+import pytest_asyncio
+from aiogram import Bot
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.methods import AnswerCallbackQuery
+
+from app.bot import keyboards
+from app.core.enums import PaymentStatus
+from app.core.settings import Settings
+from app.integrations.payments import PaymentRegistry
+from app.main import build_dispatcher
+from app.services.uow import UnitOfWork
+from tests.conftest import BASE_ENV
+from tests.fake_panel import FakePanel
+from tests.fake_payments import FakeProvider
+from tests.fake_session import FAKE_TOKEN, RecordingSession
+from tests.integration.test_trial_flow import (
+    button_texts,
+    callback_update,
+    edited_texts,
+)
+
+USER_ID = 42
+
+
+@pytest.fixture
+def provider() -> FakeProvider:
+    return FakeProvider()
+
+
+@pytest.fixture
+def session() -> RecordingSession:
+    return RecordingSession()
+
+
+@pytest.fixture
+def bot(session: RecordingSession) -> Bot:
+    return Bot(token=FAKE_TOKEN, session=session)
+
+
+@pytest_asyncio.fixture
+async def dispatcher(session_factory, provider, seeded_tariffs):
+    settings = Settings(_env_file=None, **BASE_ENV)  # type: ignore[arg-type]
+    return build_dispatcher(
+        settings,
+        session_factory,
+        FakePanel(),
+        PaymentRegistry({provider.name: provider}),
+        storage=MemoryStorage(),
+    )
+
+
+def alerts(session: RecordingSession) -> list[str]:
+    return [
+        request.text or ''
+        for request in session.requests
+        if isinstance(request, AnswerCallbackQuery)
+    ]
+
+
+async def test_tariff_grid_shows_prices_and_savings(
+    dispatcher, bot, session
+) -> None:
+    await dispatcher.feed_update(bot, callback_update(keyboards.BUY))
+
+    buttons = button_texts(session)
+    # The shortest plan is the reference and carries no badge; longer
+    # ones advertise how much cheaper their month is against it.
+    assert '1 месяц — 200 ₽' in buttons
+    assert '3 месяца — 540 ₽ (выгода 10%)' in buttons
+    assert '6 месяцев — 960 ₽ (выгода 20%)' in buttons
+    assert any(b.startswith('12 месяцев — 1680 ₽ (выгода 3') for b in buttons)
+
+
+async def test_invoice_is_created_and_shown(
+    dispatcher, bot, session, session_factory, seeded_tariffs
+) -> None:
+    tariff = seeded_tariffs[0]
+    await dispatcher.feed_update(
+        bot,
+        callback_update(f'{keyboards.PROVIDER_PREFIX}{tariff.id}:yoomoney'),
+    )
+
+    text = edited_texts(session)[-1]
+    assert 'Счёт на 200 ₽' in text
+    assert any('Оплатить 200 ₽' in b for b in button_texts(session))
+
+    async with UnitOfWork(session_factory) as uow:
+        payments = await uow.payments.list_by_user(USER_ID)
+        assert len(payments) == 1
+        assert payments[0].status == PaymentStatus.PENDING
+
+
+async def test_check_button_reports_unpaid_without_losing_the_invoice(
+    dispatcher, bot, session, session_factory, seeded_tariffs
+) -> None:
+    await dispatcher.feed_update(
+        bot,
+        callback_update(
+            f'{keyboards.PROVIDER_PREFIX}{seeded_tariffs[0].id}:yoomoney'
+        ),
+    )
+    async with UnitOfWork(session_factory) as uow:
+        payment = (await uow.payments.list_by_user(USER_ID))[0]
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.CHECK_PREFIX}{payment.id}')
+    )
+
+    # An alert, and the invoice message is left untouched so the user can
+    # still pay it.
+    assert any('пока не пришла' in alert for alert in alerts(session))
+    assert edited_texts(session) == []
+
+
+async def test_check_button_delivers_access_once_paid(
+    dispatcher, bot, session, session_factory, seeded_tariffs, provider
+) -> None:
+    await dispatcher.feed_update(
+        bot,
+        callback_update(
+            f'{keyboards.PROVIDER_PREFIX}{seeded_tariffs[1].id}:yoomoney'
+        ),
+    )
+    async with UnitOfWork(session_factory) as uow:
+        payment = (await uow.payments.list_by_user(USER_ID))[0]
+    provider.mark_paid(payment.id)
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.CHECK_PREFIX}{payment.id}')
+    )
+
+    assert any('Оплата получена' in text for text in edited_texts(session))
+    async with UnitOfWork(session_factory) as uow:
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        assert subscription.subscription_token is not None
+
+
+async def test_malformed_payment_id_is_rejected(
+    dispatcher, bot, session
+) -> None:
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.CHECK_PREFIX}not-a-uuid')
+    )
+
+    assert any('не найден' in alert for alert in alerts(session))
+
+
+async def test_purchase_is_hidden_when_no_provider_is_configured(
+    session_factory, seeded_tariffs, bot, session
+) -> None:
+    settings = Settings(_env_file=None, **BASE_ENV)  # type: ignore[arg-type]
+    dispatcher = build_dispatcher(
+        settings,
+        session_factory,
+        FakePanel(),
+        PaymentRegistry({}),
+        storage=MemoryStorage(),
+    )
+
+    await dispatcher.feed_update(
+        bot,
+        callback_update(f'{keyboards.TARIFF_PREFIX}{seeded_tariffs[0].id}'),
+    )
+
+    assert any(
+        'Оплата временно недоступна' in text for text in edited_texts(session)
+    )

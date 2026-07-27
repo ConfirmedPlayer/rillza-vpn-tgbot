@@ -1,0 +1,303 @@
+"""Payment finalisation: races, retries and idempotency."""
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+import pytest_asyncio
+
+from app.core.enums import PaymentStatus, SubscriptionStatus
+from app.core.settings import Settings
+from app.integrations.payments import PaymentRegistry
+from app.services.payment_service import FinalizeOutcome, PaymentService
+from app.services.subscription_service import SubscriptionService
+from app.services.uow import UnitOfWork
+from tests.conftest import BASE_ENV
+from tests.fake_panel import FakePanel
+from tests.fake_payments import FakeProvider
+
+USER_ID = 42
+
+
+@pytest.fixture
+def app_settings() -> Settings:
+    return Settings(_env_file=None, **BASE_ENV)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def provider() -> FakeProvider:
+    return FakeProvider()
+
+
+@pytest.fixture
+def panel() -> FakePanel:
+    return FakePanel()
+
+
+@pytest.fixture
+def registry(provider) -> PaymentRegistry:
+    return PaymentRegistry({provider.name: provider})
+
+
+def build_service(uow, panel, registry, settings) -> PaymentService:
+    subscriptions = SubscriptionService(uow, panel, settings)
+    return PaymentService(uow, registry, subscriptions, settings)
+
+
+@pytest_asyncio.fixture
+async def payments(uow, panel, registry, app_settings, seeded_tariffs):
+    await uow.users.upsert(USER_ID)
+    await uow.commit()
+    return build_service(uow, panel, registry, app_settings)
+
+
+@pytest_asyncio.fixture
+async def tariff(seeded_tariffs):
+    return seeded_tariffs[0]  # m1: 30 days, 200 rubles
+
+
+class TestInvoice:
+    async def test_invoice_is_recorded_before_the_user_can_pay(
+        self, payments, tariff, provider, uow
+    ) -> None:
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+
+        assert payment.status == PaymentStatus.PENDING
+        assert payment.amount_kopeks == 20_000
+        assert payment.invoice_url.endswith(str(payment.id))
+        assert payment.provider_invoice_id == f'inv-{payment.id}'
+        assert payment.invoice_expires_at > datetime.now(UTC)
+        assert str(payment.id) in provider.invoices
+
+    async def test_unknown_provider_is_refused(self, payments, tariff) -> None:
+        from app.integrations.payments import PaymentError
+
+        with pytest.raises(PaymentError):
+            await payments.create_invoice(USER_ID, tariff, 'nonexistent')
+
+
+class TestFinalize:
+    async def test_unpaid_invoice_stays_pending(
+        self, payments, tariff, uow
+    ) -> None:
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+
+        result = await payments.check_and_finalize(payment.id)
+
+        assert result.outcome is FinalizeOutcome.NOT_PAID
+        assert await uow.subscriptions.get_by_user(USER_ID) is None
+
+    async def test_payment_grants_access(
+        self, payments, tariff, provider, panel, uow
+    ) -> None:
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.mark_paid(payment.id)
+
+        result = await payments.check_and_finalize(payment.id)
+
+        assert result.outcome is FinalizeOutcome.PROVISIONED
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        assert subscription.status == SubscriptionStatus.ACTIVE
+        assert subscription.subscription_token is not None
+        # 30 days from now, and the panel agrees with our row.
+        assert (subscription.expires_at - datetime.now(UTC)).days == 29
+        assert panel.users[str(USER_ID)].expire_at == subscription.expires_at
+
+        stored = await uow.payments.get(payment.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.PROVISIONED
+        # What actually arrived is recorded, not compared to the price.
+        assert stored.paid_amount_kopeks == 19_800
+        assert stored.amount_kopeks == 20_000
+
+    async def test_double_tap_does_not_grant_twice(
+        self, payments, tariff, provider, uow
+    ) -> None:
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.mark_paid(payment.id)
+
+        first = await payments.check_and_finalize(payment.id)
+        second = await payments.check_and_finalize(payment.id)
+
+        assert first.outcome is FinalizeOutcome.PROVISIONED
+        assert second.outcome is FinalizeOutcome.PROVISIONED
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        assert subscription.expires_at == first.expires_at
+
+    async def test_concurrent_taps_bounce_instead_of_queueing(
+        self,
+        session_factory,
+        panel,
+        registry,
+        app_settings,
+        seeded_tariffs,
+        provider,
+        uow,
+    ) -> None:
+        """A second worker must get BUSY, not a second provisioning."""
+        await uow.users.upsert(USER_ID)
+        await uow.commit()
+        service = build_service(uow, panel, registry, app_settings)
+        payment = await service.create_invoice(
+            USER_ID, seeded_tariffs[0], 'yoomoney'
+        )
+        provider.mark_paid(payment.id)
+
+        async with UnitOfWork(session_factory) as holder_uow:
+            holder = build_service(holder_uow, panel, registry, app_settings)
+            # Hold the row inside an open transaction.
+            locked = await holder_uow.payments.lock_for_finalize(payment.id)
+            assert locked is not None
+
+            async with UnitOfWork(session_factory) as other_uow:
+                other = build_service(other_uow, panel, registry, app_settings)
+                result = await other.check_and_finalize(payment.id)
+
+            assert result.outcome is FinalizeOutcome.BUSY
+            assert await holder.check_and_finalize(payment.id) is not None
+
+    async def test_crash_between_paid_and_provisioned_is_recovered(
+        self, payments, tariff, provider, panel, uow
+    ) -> None:
+        """Money taken, panel down: the watcher finishes the job."""
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.mark_paid(payment.id)
+        panel.offline = True
+
+        interrupted = await payments.check_and_finalize(payment.id)
+
+        assert interrupted.outcome is FinalizeOutcome.PAID_PENDING_PROVISIONING
+        stored = await uow.payments.get(payment.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.PAID
+        assert stored.target_expires_at is not None
+        target = stored.target_expires_at
+
+        panel.offline = False
+        finished = await payments.finish_provisioning()
+
+        assert finished == 1
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        # The frozen target survived: no extra days for the delay.
+        assert subscription.expires_at == target
+
+    async def test_renewal_adds_to_the_remaining_days(
+        self, payments, seeded_tariffs, provider, uow
+    ) -> None:
+        first = await payments.create_invoice(
+            USER_ID, seeded_tariffs[0], 'yoomoney'
+        )
+        provider.mark_paid(first.id)
+        initial = await payments.check_and_finalize(first.id)
+
+        second = await payments.create_invoice(
+            USER_ID, seeded_tariffs[0], 'yoomoney'
+        )
+        provider.mark_paid(second.id)
+        renewed = await payments.check_and_finalize(second.id)
+
+        assert renewed.expires_at is not None
+        assert initial.expires_at is not None
+        # Renewing early keeps what was left: +30 days on top.
+        assert (renewed.expires_at - initial.expires_at).days == 30
+
+    async def test_provider_outage_is_not_a_failed_payment(
+        self, payments, tariff, provider, uow
+    ) -> None:
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.offline = True
+
+        result = await payments.check_and_finalize(payment.id)
+
+        assert result.outcome is FinalizeOutcome.PROVIDER_UNAVAILABLE
+        stored = await uow.payments.get(payment.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.PENDING
+
+    async def test_unknown_payment(self, payments) -> None:
+        import uuid
+
+        result = await payments.check_and_finalize(uuid.uuid4())
+
+        assert result.outcome is FinalizeOutcome.UNKNOWN
+
+
+class TestExpiryAndLateMoney:
+    async def test_stale_invoices_expire(self, payments, tariff, uow) -> None:
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        payment.invoice_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        await uow.commit()
+
+        expired = await payments.expire_stale()
+
+        assert [p.id for p in expired] == [payment.id]
+        stored = await uow.payments.get(payment.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.EXPIRED
+
+    async def test_paid_money_is_never_swept_into_expired(
+        self, payments, tariff, provider, uow
+    ) -> None:
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.mark_paid(payment.id)
+        await payments.check_and_finalize(payment.id)
+        payment.invoice_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        await uow.commit()
+
+        assert await payments.expire_stale() == []
+        stored = await uow.payments.get(payment.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.PROVISIONED
+
+    async def test_late_money_is_found_and_delivered(
+        self, payments, tariff, provider, uow
+    ) -> None:
+        """Money that arrives after the TTL must not vanish."""
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        payment.invoice_expires_at = datetime.now(UTC) - timedelta(hours=2)
+        await uow.commit()
+        await payments.expire_stale()
+        # The user paid anyway, after the invoice was closed.
+        provider.mark_paid(payment.id)
+
+        late = await payments.sweep_late_payments()
+
+        assert [p.id for p in late] == [payment.id]
+        stored = await uow.payments.get(payment.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.PROVISIONED
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        assert subscription.status == SubscriptionStatus.ACTIVE
+
+    async def test_sweep_ignores_still_unpaid_invoices(
+        self, payments, tariff, uow
+    ) -> None:
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        payment.invoice_expires_at = datetime.now(UTC) - timedelta(hours=2)
+        await uow.commit()
+        await payments.expire_stale()
+
+        assert await payments.sweep_late_payments() == []
+        stored = await uow.payments.get(payment.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.EXPIRED
+
+
+class TestPoller:
+    async def test_poller_finalises_paid_invoices_only(
+        self, payments, seeded_tariffs, provider, uow
+    ) -> None:
+        paid = await payments.create_invoice(
+            USER_ID, seeded_tariffs[0], 'yoomoney'
+        )
+        provider.mark_paid(paid.id)
+
+        finalised = await payments.poll_pending()
+
+        assert finalised == 1
+        stored = await uow.payments.get(paid.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.PROVISIONED

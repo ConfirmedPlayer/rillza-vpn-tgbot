@@ -1,0 +1,145 @@
+"""CryptoBot (@CryptoBot) invoices priced in rubles.
+
+Invoices are created with ``currency_type=fiat`` and ``fiat=RUB``, so
+CryptoBot performs the conversion and the bot keeps exactly one price
+column and one currency in its revenue figures — no exchange-rate code
+and no drift between a ruble price and a crypto price.
+"""
+
+from typing import Any
+from uuid import UUID
+
+import aiohttp
+
+from app.core.settings import Settings
+from app.integrations.payments.base import (
+    Invoice,
+    PaymentCheck,
+    PaymentError,
+    ProviderStatus,
+)
+
+API_URL = 'https://pay.crypt.bot/api'
+TIMEOUT = aiohttp.ClientTimeout(total=20)
+
+STATUS_MAP = {
+    'active': ProviderStatus.PENDING,
+    'paid': ProviderStatus.PAID,
+    'expired': ProviderStatus.EXPIRED,
+}
+
+
+class CryptoBotProvider:
+    name = 'cryptobot'
+
+    def __init__(
+        self, settings: Settings, session: aiohttp.ClientSession | None = None
+    ) -> None:
+        if settings.cryptobot_token is None:
+            raise PaymentError('CRYPTOBOT_TOKEN is not configured')
+        self._token = settings.cryptobot_token.get_secret_value()
+        self._session = session
+        self._owns_session = session is None
+
+    def _ensure_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=TIMEOUT)
+            self._owns_session = True
+        return self._session
+
+    async def close(self) -> None:
+        if self._owns_session and self._session is not None:
+            await self._session.close()
+            self._session = None
+
+    async def _api(self, method: str, payload: dict[str, Any]) -> Any:
+        session = self._ensure_session()
+        try:
+            async with session.post(
+                f'{API_URL}/{method}',
+                json=payload,
+                headers={'Crypto-Pay-API-Token': self._token},
+            ) as response:
+                body = await response.json(content_type=None)
+        except aiohttp.ClientError as error:
+            raise PaymentError(f'CryptoBot unreachable: {error!r}') from error
+        except TimeoutError as error:
+            raise PaymentError(f'CryptoBot timed out: {error!r}') from error
+
+        if not isinstance(body, dict) or not body.get('ok'):
+            error = body.get('error') if isinstance(body, dict) else body
+            raise PaymentError(f'CryptoBot {method} failed: {error}')
+        return body.get('result')
+
+    async def create_invoice(
+        self,
+        payment_id: UUID,
+        amount_kopeks: int,
+        description: str,
+        ttl_minutes: int,
+    ) -> Invoice:
+        result = await self._api(
+            'createInvoice',
+            {
+                'currency_type': 'fiat',
+                'fiat': 'RUB',
+                'amount': f'{amount_kopeks / 100:.2f}',
+                # Our payment id travels back on every lookup.
+                'payload': str(payment_id),
+                'description': description[:1024],
+                'expires_in': ttl_minutes * 60,
+                'allow_comments': False,
+                'allow_anonymous': True,
+            },
+        )
+        url = result.get('bot_invoice_url') or result.get('pay_url')
+        if not url:
+            raise PaymentError('CryptoBot returned an invoice without a URL')
+        return Invoice(
+            url=str(url), provider_invoice_id=str(result.get('invoice_id'))
+        )
+
+    async def check_payment(
+        self, payment_id: UUID, provider_invoice_id: str | None = None
+    ) -> PaymentCheck:
+        """Look the invoice up by id when we have one.
+
+        Falling back to the recent-invoice window would repeat the bug we
+        removed from the YooMoney path: a busy day pushes the invoice off
+        the page and the payment is never found.
+        """
+        query: dict[str, Any] = (
+            {'invoice_ids': provider_invoice_id}
+            if provider_invoice_id
+            else {'count': 100}
+        )
+        result = await self._api('getInvoices', query)
+        items = result.get('items', []) if isinstance(result, dict) else []
+
+        for invoice in items:
+            if invoice.get('payload') != str(payment_id):
+                continue
+            status = STATUS_MAP.get(
+                str(invoice.get('status')), ProviderStatus.PENDING
+            )
+            if status is not ProviderStatus.PAID:
+                return PaymentCheck(status)
+            return PaymentCheck(
+                ProviderStatus.PAID,
+                paid_amount_kopeks=_to_kopeks(
+                    invoice.get('paid_fiat_rate_amount')
+                    or invoice.get('amount')
+                ),
+                paid_currency=str(invoice.get('fiat') or 'RUB'),
+            )
+        # Not in the recent window: our own TTL decides when to give up.
+        return PaymentCheck(ProviderStatus.PENDING)
+
+
+def _to_kopeks(amount: Any) -> int | None:
+    if amount is None:
+        return None
+    try:
+        return round(float(amount) * 100)
+    except (TypeError, ValueError):
+        return None

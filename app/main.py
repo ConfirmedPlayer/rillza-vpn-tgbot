@@ -9,6 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.redis import RedisStorage
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -20,6 +21,8 @@ from app.core.logging import add_telegram_sink, setup_logging
 from app.core.settings import Settings, get_settings
 from app.db.engine import build_engine, build_session_factory
 from app.integrations.celerity import CelerityClient
+from app.integrations.payments import PaymentRegistry
+from app.scheduler.jobs import JobRunner, register_jobs
 
 
 def _dumps(value: object) -> str:
@@ -50,6 +53,7 @@ def build_dispatcher(
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession],
     panel: CelerityClient,
+    providers: PaymentRegistry | None = None,
     storage: BaseStorage | None = None,
 ) -> Dispatcher:
     """Wire the dispatcher.
@@ -63,7 +67,11 @@ def build_dispatcher(
     for observer in (dispatcher.message, dispatcher.callback_query):
         observer.outer_middleware(DatabaseMiddleware(session_factory))
         observer.outer_middleware(UserUpsertMiddleware())
-        observer.outer_middleware(ServicesMiddleware(settings, panel))
+        observer.outer_middleware(
+            ServicesMiddleware(
+                settings, panel, providers or PaymentRegistry({})
+            )
+        )
 
     return dispatcher
 
@@ -73,10 +81,15 @@ async def run() -> None:
     setup_logging(settings)
 
     engine = build_engine(settings)
+    session_factory = build_session_factory(engine)
     panel = CelerityClient(settings)
+    providers = PaymentRegistry.from_settings(settings)
     bot = build_bot(settings)
-    dispatcher = build_dispatcher(
-        settings, build_session_factory(engine), panel
+    dispatcher = build_dispatcher(settings, session_factory, panel, providers)
+
+    scheduler = AsyncIOScheduler()
+    register_jobs(
+        scheduler, JobRunner(session_factory, settings, panel, providers)
     )
 
     log_bot = build_log_bot(settings)
@@ -84,7 +97,11 @@ async def run() -> None:
         add_telegram_sink(settings, log_bot)
 
     try:
-        logger.info('Rillza VPN bot started polling')
+        scheduler.start()
+        logger.info(
+            'Rillza VPN bot started polling; payment providers: {}',
+            ', '.join(providers.available()) or 'none configured',
+        )
         await dispatcher.start_polling(bot)
     finally:
         # Let the Telegram sink flush before its bot session is closed.
@@ -93,7 +110,10 @@ async def run() -> None:
         await bot.session.close()
         if log_bot is not None:
             await log_bot.session.close()
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
         await panel.close()
+        await providers.close()
         await engine.dispose()
 
 

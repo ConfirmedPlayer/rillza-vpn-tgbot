@@ -16,6 +16,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.core.settings import Settings
 
 MENU = 'menu'
+BUY = 'buy'
+TARIFF_PREFIX = 'tariff:'
+PROVIDER_PREFIX = 'provider:'
+CHECK_PREFIX = 'check:'
 TRIAL_OFFER = 'trial:offer'
 TRIAL_CONFIRM = 'trial:confirm'
 SUBSCRIPTION = 'subscription'
@@ -27,6 +31,7 @@ def main_menu(trial_available: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if trial_available:
         builder.button(text='🎁 3 дня бесплатно', callback_data=TRIAL_OFFER)
+    builder.button(text='🛒 Купить подписку', callback_data=BUY)
     builder.button(text='🌐 Моя подписка', callback_data=SUBSCRIPTION)
     builder.button(text='📖 Как подключить', callback_data=GUIDE)
     builder.button(text='💬 Поддержка', callback_data=SUPPORT)
@@ -95,4 +100,54 @@ def guide(settings: Settings, url: str | None) -> InlineKeyboardMarkup:
 def back_to_menu() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text='↩️ Главное меню', callback_data=MENU)
+    return builder.as_markup()
+
+
+def tariffs(items) -> InlineKeyboardMarkup:
+    """One row per duration, with the per-month price to compare against."""
+    builder = InlineKeyboardBuilder()
+    # The shortest plan sets the reference month; longer ones show how
+    # much cheaper their month is against it.
+    reference = max((t.monthly_price_kopeks for t in items), default=0)
+    for tariff in items:
+        monthly = tariff.monthly_price_kopeks
+        label = f'{tariff.title_ru} — {tariff.price_kopeks // 100} ₽'
+        if reference and monthly < reference:
+            discount = round((1 - monthly / reference) * 100)
+            if discount:
+                label += f' (выгода {discount}%)'
+        builder.button(text=label, callback_data=f'{TARIFF_PREFIX}{tariff.id}')
+    builder.button(text='↩️ Главное меню', callback_data=MENU)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def providers(tariff_id: int, names, titles) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for name in names:
+        builder.button(
+            text=titles(name),
+            callback_data=f'{PROVIDER_PREFIX}{tariff_id}:{name}',
+        )
+    builder.button(text='↩️ Назад', callback_data=BUY)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def invoice(
+    url: str, payment_id: str, amount_rubles: int
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text=f'💳 Оплатить {amount_rubles} ₽', url=url)
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text='🧾 Я оплатил — проверить',
+            callback_data=f'{CHECK_PREFIX}{payment_id}',
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text='↩️ Главное меню', callback_data=MENU)
+    )
     return builder.as_markup()

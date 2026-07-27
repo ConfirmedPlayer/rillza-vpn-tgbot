@@ -118,6 +118,24 @@ class PaymentsRepository:
         )
         return result.scalar_one_or_none()
 
+    async def reopen(self, payment_id: uuid.UUID) -> Payment | None:
+        """expired -> pending, for money that arrived after the TTL.
+
+        Reopening funnels late payments back through the normal
+        finalisation path instead of adding a second way to grant access.
+        """
+        result = await self._session.execute(
+            _returning(
+                update(Payment)
+                .where(
+                    Payment.id == payment_id,
+                    Payment.status == PaymentStatus.EXPIRED,
+                )
+                .values(status=PaymentStatus.PENDING)
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def list_pending(self, moment: datetime) -> Sequence[Payment]:
         """Live invoices for the poller: pending and not past their TTL."""
         result = await self._session.execute(

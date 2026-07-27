@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     yoomoney_access_token: SecretStr | None = None
     yoomoney_wallet: str | None = None
     yoomoney_payment_type: Literal['AC', 'PC'] = 'AC'
+    # Where YooMoney sends the payer back after paying, e.g. t.me/bot.
+    bot_url: str | None = None
     cryptobot_token: SecretStr | None = None
 
     # --- Happ download links (shown in the connection guide) ------------
