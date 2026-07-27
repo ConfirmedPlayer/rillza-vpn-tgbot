@@ -7,7 +7,7 @@ which would make every test that builds its own dispatcher fail.
 
 from aiogram import Router
 
-from app.bot.routers import admin, buy, menu
+from app.bot.routers import admin, buy, menu, support
 from app.core.settings import Settings
 
 
@@ -18,6 +18,7 @@ def build_routers(settings: Settings) -> tuple[Router, ...]:
         admin.build_router(settings),
         menu.build_router(),
         buy.build_router(),
+        support.build_router(),
     )
 
 

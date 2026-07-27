@@ -23,6 +23,7 @@ from app.db.engine import build_engine, build_session_factory
 from app.integrations.celerity import CelerityClient
 from app.integrations.payments import PaymentRegistry
 from app.scheduler.jobs import JobRunner, register_jobs
+from app.services.rate_limit import RateLimiter
 
 
 def _dumps(value: object) -> str:
@@ -55,6 +56,7 @@ def build_dispatcher(
     panel: CelerityClient,
     providers: PaymentRegistry | None = None,
     storage: BaseStorage | None = None,
+    limiter: RateLimiter | None = None,
 ) -> Dispatcher:
     """Wire the dispatcher.
 
@@ -69,7 +71,7 @@ def build_dispatcher(
         observer.outer_middleware(UserUpsertMiddleware())
         observer.outer_middleware(
             ServicesMiddleware(
-                settings, panel, providers or PaymentRegistry({})
+                settings, panel, providers or PaymentRegistry({}), limiter
             )
         )
 

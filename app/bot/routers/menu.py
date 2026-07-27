@@ -4,6 +4,7 @@ from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot import keyboards
@@ -54,16 +55,20 @@ async def show_menu(
 
 
 async def handle_start(
-    message: Message, trials: TrialService, **_: object
+    message: Message, trials: TrialService, state: FSMContext, **_: object
 ) -> None:
     if message.from_user is None:
         return
+    await state.clear()
     await show_menu(message, trials, message.from_user.id)
 
 
 async def handle_menu(
-    query: CallbackQuery, trials: TrialService, **_: object
+    query: CallbackQuery, trials: TrialService, state: FSMContext, **_: object
 ) -> None:
+    # Returning to the menu leaves whatever flow the user was in —
+    # otherwise the next message still lands in support.
+    await state.clear()
     available = await trials.is_available(query.from_user.id)
     await _edit(query, ru.START, keyboards.main_menu(available))
     await query.answer()
@@ -133,11 +138,6 @@ async def handle_guide(
     await query.answer()
 
 
-async def handle_support(query: CallbackQuery, **_: object) -> None:
-    await _edit(query, ru.SUPPORT_PLACEHOLDER, keyboards.back_to_menu())
-    await query.answer()
-
-
 def build_router() -> Router:
     router = Router(name='menu')
     # Group and channel updates are dropped: this bot is private-chat only.
@@ -155,5 +155,4 @@ def build_router() -> Router:
         handle_subscription, F.data == keyboards.SUBSCRIPTION
     )
     router.callback_query.register(handle_guide, F.data == keyboards.GUIDE)
-    router.callback_query.register(handle_support, F.data == keyboards.SUPPORT)
     return router

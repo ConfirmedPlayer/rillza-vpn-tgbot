@@ -13,12 +13,14 @@ from app.bot.filters import IsAdmin
 from app.bot.routers.menu import _edit
 from app.bot.states import AdminBroadcast, AdminFindUser
 from app.bot.texts import admin as texts
+from app.bot.texts import support as support_texts
 from app.core.enums import PaymentStatus
 from app.core.settings import Settings
 from app.integrations.celerity import CelerityClient, PanelError
 from app.services.broadcast_service import BroadcastService
 from app.services.payment_service import PaymentService
 from app.services.subscription_service import SubscriptionService, utcnow
+from app.services.support_service import SupportService
 from app.services.uow import UnitOfWork
 
 
@@ -225,6 +227,64 @@ async def handle_retry_provisioning(
     await _show_user(query, telegram_id, uow, subscriptions, edit=True)
 
 
+async def handle_support_reply(
+    message: Message, support: SupportService, **_
+) -> None:
+    """A reply to a support card goes back to whoever wrote in.
+
+    The answer is copied, so the user sees it from the bot and never
+    learns who is behind it.
+    """
+    reply_to = message.reply_to_message
+    if reply_to is None:
+        return
+
+    recipient = await support.relay_to_user(
+        admin_chat_id=message.chat.id,
+        reply_to_message_id=reply_to.message_id,
+        message_id=message.message_id,
+    )
+    if recipient is None:
+        await message.reply(support_texts.REPLY_NO_THREAD)
+        return
+    await message.reply(
+        support_texts.REPLY_DELIVERED.format(user_id=recipient)
+    )
+
+
+async def handle_support_block(
+    query: CallbackQuery, support: SupportService, **_
+) -> None:
+    telegram_id = int(
+        (query.data or '').removeprefix(keyboards.SUPPORT_BLOCK_PREFIX)
+    )
+    await support.set_blocked(telegram_id, True)
+    await query.answer(
+        support_texts.USER_BLOCKED.format(user_id=telegram_id), show_alert=True
+    )
+    if query.message is not None:
+        await query.message.edit_reply_markup(
+            reply_markup=keyboards.support_blocked(telegram_id)
+        )
+
+
+async def handle_support_unblock(
+    query: CallbackQuery, support: SupportService, **_
+) -> None:
+    telegram_id = int(
+        (query.data or '').removeprefix(keyboards.SUPPORT_UNBLOCK_PREFIX)
+    )
+    await support.set_blocked(telegram_id, False)
+    await query.answer(
+        support_texts.USER_UNBLOCKED.format(user_id=telegram_id),
+        show_alert=True,
+    )
+    if query.message is not None:
+        await query.message.edit_reply_markup(
+            reply_markup=keyboards.support_card(telegram_id)
+        )
+
+
 async def handle_broadcast_start(
     query: CallbackQuery, state: FSMContext, **_
 ) -> None:
@@ -286,6 +346,9 @@ def build_router(settings: Settings) -> Router:
     router.message.register(
         handle_broadcast_draft, AdminBroadcast.waiting_for_message
     )
+    # Registered after the stateful handlers: a reply only means "answer
+    # this user" when the admin is not in the middle of another flow.
+    router.message.register(handle_support_reply, F.reply_to_message)
 
     router.callback_query.register(handle_menu, F.data == keyboards.ADMIN_MENU)
     router.callback_query.register(
@@ -318,5 +381,12 @@ def build_router(settings: Settings) -> Router:
     router.callback_query.register(
         handle_retry_provisioning,
         F.data.startswith(keyboards.ADMIN_RETRY_PREFIX),
+    )
+    router.callback_query.register(
+        handle_support_block, F.data.startswith(keyboards.SUPPORT_BLOCK_PREFIX)
+    )
+    router.callback_query.register(
+        handle_support_unblock,
+        F.data.startswith(keyboards.SUPPORT_UNBLOCK_PREFIX),
     )
     return router

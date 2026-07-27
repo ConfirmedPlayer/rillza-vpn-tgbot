@@ -26,6 +26,9 @@ SUBSCRIPTION = 'subscription'
 GUIDE = 'guide'
 SUPPORT = 'support'
 RENEW = 'renew'
+SUPPORT_LEAVE = 'support:leave'
+SUPPORT_BLOCK_PREFIX = 'support:block:'
+SUPPORT_UNBLOCK_PREFIX = 'support:unblock:'
 
 ADMIN_MENU = 'admin'
 ADMIN_STATS = 'admin:stats'
@@ -221,4 +224,33 @@ def admin_broadcast_confirm() -> InlineKeyboardMarkup:
     builder.button(text='📣 Отправить всем', callback_data=ADMIN_BROADCAST_GO)
     builder.button(text='↩️ Отмена', callback_data=ADMIN_MENU)
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def support_writing() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text='↩️ Выйти из поддержки', callback_data=MENU)
+    return builder.as_markup()
+
+
+def support_card(telegram_id: int) -> InlineKeyboardMarkup:
+    """Admin-side actions on an incoming support message."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text='👤 Профиль', callback_data=f'{ADMIN_USER_PREFIX}{telegram_id}'
+    )
+    builder.button(
+        text='🚫 Заблокировать',
+        callback_data=f'{SUPPORT_BLOCK_PREFIX}{telegram_id}',
+    )
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def support_blocked(telegram_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text='♻️ Разблокировать',
+        callback_data=f'{SUPPORT_UNBLOCK_PREFIX}{telegram_id}',
+    )
     return builder.as_markup()

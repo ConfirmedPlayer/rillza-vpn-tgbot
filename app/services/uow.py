@@ -8,6 +8,7 @@ from app.repositories.broadcasts import BroadcastsRepository
 from app.repositories.payments import PaymentsRepository
 from app.repositories.stats import StatsRepository
 from app.repositories.subscriptions import SubscriptionsRepository
+from app.repositories.support import SupportRepository
 from app.repositories.tariffs import TariffsRepository
 from app.repositories.users import UsersRepository
 
@@ -36,6 +37,7 @@ class UnitOfWork:
         self.payments = PaymentsRepository(self._session)
         self.broadcasts = BroadcastsRepository(self._session)
         self.stats = StatsRepository(self._session)
+        self.support = SupportRepository(self._session)
         return self
 
     async def __aexit__(

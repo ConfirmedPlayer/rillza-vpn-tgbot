@@ -66,8 +66,8 @@ def message_update(text: str, chat_type: str = 'private') -> Update:
     )
 
 
-def callback_update(data: str) -> Update:
-    user = TelegramUser(id=USER_ID, is_bot=False, first_name='Тест')
+def callback_update(data: str, user_id: int = USER_ID) -> Update:
+    user = TelegramUser(id=user_id, is_bot=False, first_name='Тест')
     return Update(
         update_id=2,
         callback_query=CallbackQuery(
@@ -78,7 +78,7 @@ def callback_update(data: str) -> Update:
             message=Message(
                 message_id=7,
                 date=datetime.now(UTC),
-                chat=Chat(id=USER_ID, type='private'),
+                chat=Chat(id=user_id, type='private'),
                 from_user=user,
                 text='предыдущий экран',
             ),

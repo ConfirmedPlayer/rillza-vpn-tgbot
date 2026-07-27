@@ -12,8 +12,8 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import SendMessage, TelegramMethod
-from aiogram.types import Chat, Message, User
+from aiogram.methods import CopyMessage, SendMessage, TelegramMethod
+from aiogram.types import Chat, Message, MessageId, User
 
 BOT_ID = 123456789
 FAKE_TOKEN = f'{BOT_ID}:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0'
@@ -30,6 +30,9 @@ class RecordingSession(BaseSession):
         self, bot: Bot, method: TelegramMethod[Any], timeout: int | None = None
     ) -> Any:
         self.requests.append(method)
+        if isinstance(method, CopyMessage):
+            # copy_message answers with the new message's id only.
+            return MessageId(message_id=len(self.requests))
         if isinstance(method, SendMessage):
             return Message(
                 message_id=len(self.requests),

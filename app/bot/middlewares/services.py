@@ -15,7 +15,9 @@ from app.integrations.celerity import CelerityClient
 from app.integrations.payments import PaymentRegistry
 from app.services.broadcast_service import BroadcastService
 from app.services.payment_service import PaymentService
+from app.services.rate_limit import AllowAllRateLimiter, RateLimiter
 from app.services.subscription_service import SubscriptionService
+from app.services.support_service import SupportService
 from app.services.trial_service import TrialService
 from app.services.uow import UnitOfWork
 
@@ -26,10 +28,12 @@ class ServicesMiddleware(BaseMiddleware):
         settings: Settings,
         panel: CelerityClient,
         providers: PaymentRegistry,
+        limiter: RateLimiter | None = None,
     ) -> None:
         self._settings = settings
         self._panel = panel
         self._providers = providers
+        self._limiter = limiter or AllowAllRateLimiter()
 
     async def __call__(
         self,
@@ -50,6 +54,9 @@ class ServicesMiddleware(BaseMiddleware):
             bot = data.get('bot')
             if bot is not None:
                 data['broadcasts'] = BroadcastService(uow, bot)
+                data['support'] = SupportService(
+                    uow, bot, self._settings, subscriptions, self._limiter
+                )
         data['settings'] = self._settings
         data['panel'] = self._panel
         data['providers'] = self._providers
