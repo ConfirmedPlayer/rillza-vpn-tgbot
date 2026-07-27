@@ -49,8 +49,8 @@ async def main() -> int:
                 print(f'[{OK}] group {settings.panel_group_name!r} resolved')
             else:
                 print(
-                    f'[{FAIL}] group {settings.panel_group_name!r} not found — '
-                    'set PANEL_GROUP_NAME to one of the names above'
+                    f'[{FAIL}] group {settings.panel_group_name!r} '
+                    'not found — set PANEL_GROUP_NAME to a name above'
                 )
                 failures += 1
         except PanelError as error:
