@@ -13,11 +13,13 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bot.middlewares.database import DatabaseMiddleware
+from app.bot.middlewares.services import ServicesMiddleware
 from app.bot.middlewares.user_upsert import UserUpsertMiddleware
 from app.bot.routers import build_routers
 from app.core.logging import add_telegram_sink, setup_logging
 from app.core.settings import Settings, get_settings
 from app.db.engine import build_engine, build_session_factory
+from app.integrations.celerity import CelerityClient
 
 
 def _dumps(value: object) -> str:
@@ -46,18 +48,22 @@ def build_storage(settings: Settings) -> BaseStorage:
 
 def build_dispatcher(
     settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    panel: CelerityClient,
     storage: BaseStorage | None = None,
-    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> Dispatcher:
-    """Wire the dispatcher; tests pass an in-memory storage."""
+    """Wire the dispatcher.
+
+    Tests pass an in-memory storage and a fake panel.
+    """
     dispatcher = Dispatcher(storage=storage or build_storage(settings))
     dispatcher.include_routers(*build_routers())
 
-    if session_factory is not None:
-        # Outer middlewares so the unit of work also covers filters.
-        for observer in (dispatcher.message, dispatcher.callback_query):
-            observer.outer_middleware(DatabaseMiddleware(session_factory))
-            observer.outer_middleware(UserUpsertMiddleware())
+    # Outer middlewares so the unit of work also covers filters.
+    for observer in (dispatcher.message, dispatcher.callback_query):
+        observer.outer_middleware(DatabaseMiddleware(session_factory))
+        observer.outer_middleware(UserUpsertMiddleware())
+        observer.outer_middleware(ServicesMiddleware(settings, panel))
 
     return dispatcher
 
@@ -67,9 +73,10 @@ async def run() -> None:
     setup_logging(settings)
 
     engine = build_engine(settings)
+    panel = CelerityClient(settings)
     bot = build_bot(settings)
     dispatcher = build_dispatcher(
-        settings, session_factory=build_session_factory(engine)
+        settings, build_session_factory(engine), panel
     )
 
     log_bot = build_log_bot(settings)
@@ -86,6 +93,7 @@ async def run() -> None:
         await bot.session.close()
         if log_bot is not None:
             await log_bot.session.close()
+        await panel.close()
         await engine.dispose()
 
 

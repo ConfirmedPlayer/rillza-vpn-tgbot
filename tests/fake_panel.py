@@ -1,0 +1,114 @@
+"""In-memory stand-in for the CELERITY panel.
+
+Mirrors the behaviours the bot depends on: create-or-fetch semantics,
+absolute expiry, and a subscription token minted on creation. Failures
+can be armed to exercise the degraded paths.
+"""
+
+import secrets
+from datetime import datetime
+
+from app.integrations.celerity.errors import PanelUnavailableError
+from app.integrations.celerity.schemas import (
+    PanelHealth,
+    PanelUser,
+    ServerGroup,
+    SubscriptionInfo,
+    Traffic,
+)
+
+GROUP_ID = '65f0aa0000000000000000aa'
+
+
+class FakePanel:
+    """Implements the slice of CelerityClient the services call."""
+
+    def __init__(self, group_name: str = 'Rillza') -> None:
+        self.users: dict[str, PanelUser] = {}
+        self.group_name = group_name
+        #: Raise PanelUnavailableError from every call while set.
+        self.offline = False
+        self.calls: list[str] = []
+        self.info_traffic = Traffic(used=0, limit=0)
+
+    def _guard(self, call: str) -> None:
+        self.calls.append(call)
+        if self.offline:
+            raise PanelUnavailableError('fake panel is offline')
+
+    async def resolve_group_id(self, refresh: bool = False) -> str:
+        self._guard('resolve_group_id')
+        return GROUP_ID
+
+    async def list_groups(self) -> list[ServerGroup]:
+        self._guard('list_groups')
+        return [ServerGroup(_id=GROUP_ID, name=self.group_name)]
+
+    async def get_user(self, panel_user_id: str) -> PanelUser | None:
+        self._guard(f'get_user:{panel_user_id}')
+        return self.users.get(panel_user_id)
+
+    async def create_or_get_user(
+        self,
+        panel_user_id: str,
+        expire_at: datetime | None,
+        username: str = '',
+        group_id: str | None = None,
+    ) -> tuple[PanelUser, bool]:
+        self._guard(f'create_or_get_user:{panel_user_id}')
+        existing = self.users.get(panel_user_id)
+        if existing is not None:
+            return existing, False
+        user = PanelUser(
+            userId=panel_user_id,
+            username=username,
+            enabled=True,
+            expireAt=expire_at,
+            trafficLimit=0,
+            maxDevices=0,
+            subscriptionToken=secrets.token_hex(8),
+        )
+        self.users[panel_user_id] = user
+        return user, True
+
+    async def set_expiry(
+        self, panel_user_id: str, expire_at: datetime | None
+    ) -> PanelUser:
+        self._guard(f'set_expiry:{panel_user_id}')
+        user = self.users[panel_user_id]
+        updated = user.model_copy(
+            update={'expire_at': expire_at, 'enabled': True}
+        )
+        self.users[panel_user_id] = updated
+        return updated
+
+    async def revoke(self, panel_user_id: str) -> PanelUser:
+        self._guard(f'revoke:{panel_user_id}')
+        user = self.users[panel_user_id]
+        updated = user.model_copy(update={'enabled': False})
+        self.users[panel_user_id] = updated
+        return updated
+
+    async def get_subscription_info(
+        self, token: str
+    ) -> SubscriptionInfo | None:
+        self._guard(f'get_subscription_info:{token}')
+        for user in self.users.values():
+            if user.subscription_token == token:
+                return SubscriptionInfo(
+                    enabled=user.enabled,
+                    expire=user.expire_at,
+                    servers=3,
+                    traffic=self.info_traffic,
+                )
+        return None
+
+    async def health(self) -> PanelHealth:
+        self._guard('health')
+        return PanelHealth(status='ok', isSyncing=False)
+
+    async def sync(self) -> None:
+        self._guard('sync')
+
+    async def close(self) -> None:
+        return None

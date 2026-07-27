@@ -28,6 +28,9 @@ select = [
     "ASYNC",  # flake8-async
     "RUF",    # ruff-specific
 ]
+# The product speaks Russian: RUF001-003 flag every Cyrillic letter that
+# resembles a Latin one, which is noise here.
+ignore = ["RUF001", "RUF002", "RUF003"]
 fixable = ["ALL"]
 unfixable = []
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
