@@ -20,10 +20,14 @@ RUN --mount=from=uv,source=/uv,target=/bin/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     uv sync --locked --no-dev --no-install-project
 
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock alembic.ini docker-entrypoint.sh ./
+COPY alembic ./alembic
 COPY app ./app
 
-RUN useradd --create-home --uid 1000 rillza && chown -R rillza:rillza /app
+RUN chmod +x docker-entrypoint.sh \
+    && useradd --create-home --uid 1000 rillza \
+    && chown -R rillza:rillza /app
 USER rillza
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["python", "-m", "app"]

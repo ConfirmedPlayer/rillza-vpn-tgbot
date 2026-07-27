@@ -21,14 +21,8 @@ def bot(session: RecordingSession) -> Bot:
     return Bot(token=FAKE_TOKEN, session=session)
 
 
-@pytest.fixture(scope='module')
-def dispatcher():
-    """Built once: aiogram routers are module singletons and a router
-    cannot be attached to a second dispatcher."""
-    from app.core.settings import Settings
-    from tests.conftest import BASE_ENV
-
-    settings = Settings(_env_file=None, **BASE_ENV)  # type: ignore[arg-type]
+@pytest.fixture
+def dispatcher(settings):
     return build_dispatcher(settings, storage=MemoryStorage())
 
 

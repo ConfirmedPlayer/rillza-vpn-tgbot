@@ -1,0 +1,171 @@
+"""Payment queries.
+
+Two rules shape this module, both about not losing money:
+
+* the manual "проверить оплату" button and the background poller share
+  :meth:`lock_for_finalize`, so a double tap cannot provision twice;
+* every state change is a compare-and-set that RETURNs the updated row.
+  Reading the ORM object after a plain UPDATE is unreliable — attributes
+  that were never loaded stay stale, and touching them in async code
+  raises MissingGreenlet — so the authoritative row comes back from the
+  same statement.
+"""
+
+import uuid
+from collections.abc import Sequence
+from datetime import datetime
+
+from sqlalchemy import Update, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.enums import PaymentStatus
+from app.db.models import Payment
+
+
+def _returning(statement: Update) -> Update:
+    return statement.returning(Payment).execution_options(
+        synchronize_session=False, populate_existing=True
+    )
+
+
+class PaymentsRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, payment_id: uuid.UUID) -> Payment | None:
+        return await self._session.get(Payment, payment_id)
+
+    async def add(self, payment: Payment) -> Payment:
+        self._session.add(payment)
+        await self._session.flush()
+        return payment
+
+    async def lock_for_finalize(self, payment_id: uuid.UUID) -> Payment | None:
+        """Take the row with FOR UPDATE SKIP LOCKED.
+
+        Returns None when another worker already holds it, so the caller
+        can answer "проверяем…" instead of blocking behind an HTTP call.
+        """
+        result = await self._session.execute(
+            select(Payment)
+            .where(Payment.id == payment_id)
+            .with_for_update(skip_locked=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_paid(
+        self,
+        payment_id: uuid.UUID,
+        paid_at: datetime,
+        target_expires_at: datetime,
+        paid_amount_kopeks: int | None = None,
+        paid_currency: str | None = None,
+    ) -> Payment | None:
+        """pending -> paid, freezing the absolute target expiry.
+
+        Returns the updated payment, or None when the payment was not
+        pending any more — only the first caller wins, and
+        ``target_expires_at`` is never recomputed, so provisioning
+        retries cannot add the duration twice.
+        """
+        result = await self._session.execute(
+            _returning(
+                update(Payment)
+                .where(
+                    Payment.id == payment_id,
+                    Payment.status == PaymentStatus.PENDING,
+                )
+                .values(
+                    status=PaymentStatus.PAID,
+                    paid_at=paid_at,
+                    target_expires_at=target_expires_at,
+                    paid_amount_kopeks=paid_amount_kopeks,
+                    paid_currency=paid_currency,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_provisioned(
+        self, payment_id: uuid.UUID, moment: datetime
+    ) -> Payment | None:
+        """paid -> provisioned. Only a paid payment can be delivered."""
+        result = await self._session.execute(
+            _returning(
+                update(Payment)
+                .where(
+                    Payment.id == payment_id,
+                    Payment.status == PaymentStatus.PAID,
+                )
+                .values(
+                    status=PaymentStatus.PROVISIONED, provisioned_at=moment
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_expired(self, payment_id: uuid.UUID) -> Payment | None:
+        """pending -> expired. Never touches money already received."""
+        result = await self._session.execute(
+            _returning(
+                update(Payment)
+                .where(
+                    Payment.id == payment_id,
+                    Payment.status == PaymentStatus.PENDING,
+                )
+                .values(status=PaymentStatus.EXPIRED)
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_pending(self, moment: datetime) -> Sequence[Payment]:
+        """Live invoices for the poller: pending and not past their TTL."""
+        result = await self._session.execute(
+            select(Payment).where(
+                Payment.status == PaymentStatus.PENDING,
+                Payment.invoice_expires_at > moment,
+            )
+        )
+        return result.scalars().all()
+
+    async def list_stale_pending(self, moment: datetime) -> Sequence[Payment]:
+        result = await self._session.execute(
+            select(Payment).where(
+                Payment.status == PaymentStatus.PENDING,
+                Payment.invoice_expires_at <= moment,
+            )
+        )
+        return result.scalars().all()
+
+    async def list_awaiting_provisioning(self) -> Sequence[Payment]:
+        """Money taken, access not delivered — the retry queue."""
+        result = await self._session.execute(
+            select(Payment)
+            .where(Payment.status == PaymentStatus.PAID)
+            .order_by(Payment.paid_at)
+        )
+        return result.scalars().all()
+
+    async def list_recently_expired(
+        self, since: datetime, until: datetime
+    ) -> Sequence[Payment]:
+        """Expired invoices to re-check once for late money."""
+        result = await self._session.execute(
+            select(Payment).where(
+                Payment.status == PaymentStatus.EXPIRED,
+                Payment.invoice_expires_at >= since,
+                Payment.invoice_expires_at < until,
+            )
+        )
+        return result.scalars().all()
+
+    async def list_by_user(
+        self, telegram_id: int, limit: int = 20
+    ) -> Sequence[Payment]:
+        result = await self._session.execute(
+            select(Payment)
+            .where(Payment.user_id == telegram_id)
+            .order_by(Payment.created_at.desc())
+            .limit(limit)
+        )
+        return result.scalars().all()

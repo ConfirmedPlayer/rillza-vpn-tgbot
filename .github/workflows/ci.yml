@@ -9,9 +9,35 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Integration tests need a real PostgreSQL: SQLite ignores FOR UPDATE,
+  # so the payment-locking tests would pass without proving anything.
+  TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/rillza_test
+  # Migrations are applied against the same instance.
+  DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/rillza_migrations
+  BOT_TOKEN: 123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0
+  PANEL_BASE_URL: https://panel.example.com
+  PANEL_API_KEY: ck_ci
+
 jobs:
   check:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +54,22 @@ jobs:
 
       - name: Format check
         run: uv run ruff format --check .
+
+      - name: Create databases
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" \
+            -c 'CREATE DATABASE rillza_test;' \
+            -c 'CREATE DATABASE rillza_migrations;'
+
+      - name: Migrations apply and match the models
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+
+      - name: Migrations downgrade cleanly
+        run: |
+          uv run alembic downgrade base
+          uv run alembic upgrade head
 
       - name: Tests
         run: uv run pytest

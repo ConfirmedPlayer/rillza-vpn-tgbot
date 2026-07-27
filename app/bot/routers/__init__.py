@@ -1,13 +1,17 @@
-"""Routers are registered explicitly, in order.
+"""Router registration.
 
-The legacy bot auto-imported every module in this package; an explicit
-list keeps registration order obvious and makes a typo a hard error.
+Routers are built per dispatcher rather than kept as module-level
+singletons: aiogram refuses to attach one router to a second dispatcher,
+which would make every test that builds its own dispatcher fail.
 """
 
 from aiogram import Router
 
 from app.bot.routers import start
 
-ROUTERS: tuple[Router, ...] = (start.router,)
 
-__all__ = ['ROUTERS']
+def build_routers() -> tuple[Router, ...]:
+    return (start.build_router(),)
+
+
+__all__ = ['build_routers']

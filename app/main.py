@@ -10,10 +10,14 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.redis import RedisStorage
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.bot.routers import ROUTERS
+from app.bot.middlewares.database import DatabaseMiddleware
+from app.bot.middlewares.user_upsert import UserUpsertMiddleware
+from app.bot.routers import build_routers
 from app.core.logging import add_telegram_sink, setup_logging
 from app.core.settings import Settings, get_settings
+from app.db.engine import build_engine, build_session_factory
 
 
 def _dumps(value: object) -> str:
@@ -41,11 +45,20 @@ def build_storage(settings: Settings) -> BaseStorage:
 
 
 def build_dispatcher(
-    settings: Settings, storage: BaseStorage | None = None
+    settings: Settings,
+    storage: BaseStorage | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> Dispatcher:
     """Wire the dispatcher; tests pass an in-memory storage."""
     dispatcher = Dispatcher(storage=storage or build_storage(settings))
-    dispatcher.include_routers(*ROUTERS)
+    dispatcher.include_routers(*build_routers())
+
+    if session_factory is not None:
+        # Outer middlewares so the unit of work also covers filters.
+        for observer in (dispatcher.message, dispatcher.callback_query):
+            observer.outer_middleware(DatabaseMiddleware(session_factory))
+            observer.outer_middleware(UserUpsertMiddleware())
+
     return dispatcher
 
 
@@ -53,8 +66,11 @@ async def run() -> None:
     settings = get_settings()
     setup_logging(settings)
 
+    engine = build_engine(settings)
     bot = build_bot(settings)
-    dispatcher = build_dispatcher(settings)
+    dispatcher = build_dispatcher(
+        settings, session_factory=build_session_factory(engine)
+    )
 
     log_bot = build_log_bot(settings)
     if log_bot is not None:
@@ -70,6 +86,7 @@ async def run() -> None:
         await bot.session.close()
         if log_bot is not None:
             await log_bot.session.close()
+        await engine.dispose()
 
 
 def main() -> None:

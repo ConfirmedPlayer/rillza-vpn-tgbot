@@ -6,9 +6,9 @@
 
 План разработки и все принятые решения: [PLAN.md](PLAN.md).
 
-> Проект в разработке. Готов этап 1 (каркас): конфигурация, логирование,
-> `/start`, Docker Compose, CI. Работа над остальными этапами идёт в
-> порядке, описанном в PLAN.md §13.
+> Проект в разработке. Готовы этап 1 (каркас: конфигурация, логирование,
+> `/start`, Docker Compose, CI) и этап 2 (база данных: модели, миграции,
+> репозитории, unit of work). Дальше — по порядку из PLAN.md §14.
 
 ## Стек
 
@@ -27,11 +27,29 @@ docker compose logs -f bot
 ## Локальная разработка
 
 ```bash
-uv sync                 # поставить зависимости
-uv run ruff check .     # линт
-uv run ruff format .    # форматирование
-uv run pytest           # тесты
-uv run python -m app    # запуск бота (нужен Redis из compose)
+uv sync                    # поставить зависимости
+uv run ruff check .        # линт
+uv run ruff format .       # форматирование
+uv run pytest              # тесты (интеграционные пропускаются без БД)
+uv run alembic upgrade head  # применить миграции
+uv run python -m app       # запуск бота (нужны Postgres и Redis)
+```
+
+Интеграционные тесты требуют настоящий PostgreSQL — SQLite игнорирует
+`FOR UPDATE`, и проверки блокировки платежей проходили бы впустую:
+
+```bash
+createdb rillza_test
+TEST_DATABASE_URL=postgresql+asyncpg://postgres@localhost:5432/rillza_test \
+  uv run pytest
+```
+
+Миграции применяются автоматически при старте контейнера
+(`docker-entrypoint.sh`). Новые создаются так:
+
+```bash
+uv run alembic revision --autogenerate -m "что изменилось"
+uv run alembic check   # проверить, что модели и миграции сошлись
 ```
 
 ## Настройки
@@ -60,11 +78,15 @@ uv run python -m app    # запуск бота (нужен Redis из compose)
 
 ```
 app/
-├── core/      настройки, логирование
-├── bot/       роутеры, тексты
-└── main.py    сборка и запуск
-tests/         pytest
-src/           старый бот (удаляется на финальном этапе)
+├── core/           настройки, логирование, перечисления
+├── db/             модели и движок SQLAlchemy
+├── repositories/   запросы к БД
+├── services/       unit of work
+├── bot/            роутеры, тексты, middlewares
+└── main.py         сборка и запуск
+alembic/            миграции
+tests/              unit + integration (нужен Postgres)
+src/                старый бот (удаляется на финальном этапе)
 ```
 
 ## Лицензия

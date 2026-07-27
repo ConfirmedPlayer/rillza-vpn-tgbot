@@ -11,11 +11,14 @@ from aiogram.types import Message
 
 from app.bot.texts import ru
 
-router = Router(name='start')
-# Group and channel updates are dropped: this bot is private-chat only.
-router.message.filter(F.chat.type == ChatType.PRIVATE)
 
-
-@router.message(CommandStart())
 async def handle_start(message: Message) -> None:
     await message.answer(ru.START)
+
+
+def build_router() -> Router:
+    router = Router(name='start')
+    # Group and channel updates are dropped: this bot is private-chat only.
+    router.message.filter(F.chat.type == ChatType.PRIVATE)
+    router.message.register(handle_start, CommandStart())
+    return router
