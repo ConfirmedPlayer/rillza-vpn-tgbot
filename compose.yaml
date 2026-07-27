@@ -1,25 +1,45 @@
 services:
-  temnomor-access-tgbot:
+  bot:
     build:
       context: .
-    restart: always
-    volumes:
-      - ./src:/app
+    restart: unless-stopped
     env_file:
       - .env
-    command:
-      - "sh"
-      - "-c"
-      - |
-        python main.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rillza}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-rillza}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-rillza} -d ${POSTGRES_DB:-rillza}
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
-    image: redis:latest
-    container_name: my-redis
-    ports:
-      - "6379:6379"
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
-    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
+  postgres_data:
   redis_data:

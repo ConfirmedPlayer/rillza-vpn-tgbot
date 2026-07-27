@@ -1,23 +1,29 @@
-ARG UV_VERSION=latest
 ARG PYTHON_VERSION=3.13
-ARG REDIS_VERSION=latest
+ARG UV_VERSION=0.8
 
-FROM redis:${REDIS_VERSION} AS redis
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
-FROM python:${PYTHON_VERSION}-slim AS base
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+FROM python:${PYTHON_VERSION}-slim
 
-EXPOSE 6379
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/usr/local
 
 WORKDIR /app
 
+# Dependencies first: this layer is cached until the lockfile changes.
 RUN --mount=from=uv,source=/uv,target=/bin/uv \
     --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv pip install --system -r pyproject.toml
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    uv sync --locked --no-dev --no-install-project
 
-COPY . .
+COPY pyproject.toml uv.lock ./
+COPY app ./app
 
-CMD ["python", "src/main.py"]
+RUN useradd --create-home --uid 1000 rillza && chown -R rillza:rillza /app
+USER rillza
+
+CMD ["python", "-m", "app"]
