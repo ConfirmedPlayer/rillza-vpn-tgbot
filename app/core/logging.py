@@ -95,11 +95,16 @@ def build_telegram_sink(
 
 
 def add_telegram_sink(settings: Settings, log_bot: Bot) -> None:
-    """Attach the Telegram sink; no-op unless it is configured."""
-    if settings.log_chat_id is None:
+    """Attach the Telegram sink; no-op unless it is configured.
+
+    Uses the same predicate as the caller so a half-filled configuration
+    can never attach a sink pointed at an empty chat id.
+    """
+    chat_id = settings.log_chat_id
+    if not settings.telegram_logging_enabled or chat_id is None:
         return
     logger.add(
-        build_telegram_sink(log_bot, settings.log_chat_id),
+        build_telegram_sink(log_bot, chat_id),
         level=settings.log_telegram_level,
         format=TELEGRAM_FORMAT,
         colorize=False,

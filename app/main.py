@@ -27,6 +27,13 @@ def build_bot(settings: Settings) -> Bot:
     )
 
 
+def build_log_bot(settings: Settings) -> Bot | None:
+    """The second bot used for the Telegram log sink, if configured."""
+    if not settings.telegram_logging_enabled or settings.log_bot_token is None:
+        return None
+    return Bot(token=settings.log_bot_token.get_secret_value())
+
+
 def build_storage(settings: Settings) -> BaseStorage:
     return RedisStorage.from_url(
         settings.redis_url, json_loads=orjson.loads, json_dumps=_dumps
@@ -49,10 +56,8 @@ async def run() -> None:
     bot = build_bot(settings)
     dispatcher = build_dispatcher(settings)
 
-    log_bot: Bot | None = None
-    if settings.telegram_logging_enabled:
-        assert settings.log_bot_token is not None
-        log_bot = Bot(token=settings.log_bot_token.get_secret_value())
+    log_bot = build_log_bot(settings)
+    if log_bot is not None:
         add_telegram_sink(settings, log_bot)
 
     try:

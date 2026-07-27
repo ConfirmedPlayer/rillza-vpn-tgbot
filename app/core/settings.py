@@ -21,6 +21,10 @@ class Settings(BaseSettings):
         env_file=PROJECT_ROOT / '.env',
         env_file_encoding='utf-8',
         extra='ignore',
+        # .env.example ships optional vars as blank lines ("LOG_BOT_TOKEN=").
+        # Without this they load as '' instead of None, which reads as
+        # "configured" and starts a Bot with an empty token.
+        env_ignore_empty=True,
     )
 
     # --- Telegram -------------------------------------------------------
@@ -86,7 +90,16 @@ class Settings(BaseSettings):
 
     @property
     def telegram_logging_enabled(self) -> bool:
-        return self.log_bot_token is not None and self.log_chat_id is not None
+        """True only when both credentials carry an actual value.
+
+        Truthiness rather than ``is not None`` so a blank value from any
+        source (env, .env, direct kwargs) means "disabled" instead of
+        "configured with an empty token".
+        """
+        token = self.log_bot_token
+        return bool(token and token.get_secret_value()) and bool(
+            str(self.log_chat_id or '').strip()
+        )
 
     def subscription_url(self, token: str) -> str:
         """Public subscription link handed to the user's Happ app."""
