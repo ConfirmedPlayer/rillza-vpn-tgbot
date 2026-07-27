@@ -19,6 +19,7 @@ from app.integrations.celerity import CelerityClient
 from app.integrations.payments import PaymentRegistry
 from app.services.notification_service import NotificationService
 from app.services.payment_service import PaymentService
+from app.services.reconcile_service import ReconcileService
 from app.services.subscription_service import SubscriptionService, utcnow
 from app.services.uow import UnitOfWork
 
@@ -28,6 +29,7 @@ INVOICE_EXPIRER = 'invoice_expirer'
 EXPIRY_SYNC = 'expiry_sync'
 LATE_PAYMENT_SWEEP = 'late_payment_sweep'
 EXPIRY_NOTIFIER = 'expiry_notifier'
+RECONCILER = 'reconciler'
 
 
 class JobRunner:
@@ -111,6 +113,17 @@ class JobRunner:
             ).send_expiry_reminders(),
         )
 
+    async def reconcile(self) -> None:
+        def action(uow: UnitOfWork):
+            subscriptions = SubscriptionService(
+                uow, self._panel, self._settings
+            )
+            return ReconcileService(
+                uow, self._panel, self._settings, subscriptions
+            ).run()
+
+        await self.run(RECONCILER, action)
+
     async def sync_expired(self) -> None:
         async def action(uow: UnitOfWork) -> None:
             now = utcnow()
@@ -154,6 +167,14 @@ def register_jobs(scheduler: AsyncIOScheduler, runner: JobRunner) -> None:
         'interval',
         hours=1,
         id=EXPIRY_NOTIFIER,
+        **common,
+    )
+    scheduler.add_job(
+        runner.reconcile,
+        'interval',
+        hours=4,
+        id=RECONCILER,
+        next_run_time=utcnow() + timedelta(minutes=2),
         **common,
     )
     scheduler.add_job(

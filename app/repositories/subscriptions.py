@@ -91,6 +91,13 @@ class SubscriptionsRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_all(self) -> Sequence[Subscription]:
+        """Every subscription, for reconciliation against the panel."""
+        result = await self._session.execute(
+            select(Subscription).order_by(Subscription.user_id)
+        )
+        return result.scalars().all()
+
     async def count_by_status(self) -> dict[str, int]:
         result = await self._session.execute(
             select(Subscription.status, func.count()).group_by(

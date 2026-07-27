@@ -75,6 +75,14 @@ class FakePanel:
         self.users[panel_user_id] = user
         return user, True
 
+    async def iter_users(
+        self, page: int = 1, limit: int = 100
+    ) -> tuple[list[PanelUser], int]:
+        self._guard('iter_users')
+        ordered = list(self.users.values())
+        start = (page - 1) * limit
+        return ordered[start : start + limit], len(ordered)
+
     async def set_expiry(
         self, panel_user_id: str, expire_at: datetime | None
     ) -> PanelUser:

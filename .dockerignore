@@ -38,6 +38,5 @@ tests
 .github
 .ruff_cache
 .pytest_cache
-src
 
 # Keep alembic/ and docker-entrypoint.sh: the container migrates on boot.

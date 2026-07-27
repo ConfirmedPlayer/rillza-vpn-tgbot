@@ -1,4 +1,3 @@
-# Legacy bot lives in src/ until it is removed in the final phase (see PLAN.md).
 exclude = [
     ".git",
     ".mypy_cache",
@@ -9,7 +8,6 @@ exclude = [
     "build",
     "dist",
     "node_modules",
-    "src",
     "venv",
 ]
 
