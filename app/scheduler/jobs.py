@@ -8,6 +8,7 @@ with ``max_instances=1`` and coalescing: a slow run must never stack.
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
+from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -16,6 +17,7 @@ from app.core.settings import Settings
 from app.db.models import JobHeartbeat
 from app.integrations.celerity import CelerityClient
 from app.integrations.payments import PaymentRegistry
+from app.services.notification_service import NotificationService
 from app.services.payment_service import PaymentService
 from app.services.subscription_service import SubscriptionService, utcnow
 from app.services.uow import UnitOfWork
@@ -25,6 +27,7 @@ PROVISIONING_WATCHER = 'provisioning_watcher'
 INVOICE_EXPIRER = 'invoice_expirer'
 EXPIRY_SYNC = 'expiry_sync'
 LATE_PAYMENT_SWEEP = 'late_payment_sweep'
+EXPIRY_NOTIFIER = 'expiry_notifier'
 
 
 class JobRunner:
@@ -36,11 +39,13 @@ class JobRunner:
         settings: Settings,
         panel: CelerityClient,
         providers: PaymentRegistry,
+        bot: Bot,
     ) -> None:
         self._session_factory = session_factory
         self._settings = settings
         self._panel = panel
         self._providers = providers
+        self._bot = bot
 
     def _payments(self, uow: UnitOfWork) -> PaymentService:
         subscriptions = SubscriptionService(uow, self._panel, self._settings)
@@ -98,6 +103,14 @@ class JobRunner:
             lambda uow: self._payments(uow).sweep_late_payments(),
         )
 
+    async def send_expiry_reminders(self) -> None:
+        await self.run(
+            EXPIRY_NOTIFIER,
+            lambda uow: NotificationService(
+                uow, self._bot
+            ).send_expiry_reminders(),
+        )
+
     async def sync_expired(self) -> None:
         async def action(uow: UnitOfWork) -> None:
             now = utcnow()
@@ -135,6 +148,13 @@ def register_jobs(scheduler: AsyncIOScheduler, runner: JobRunner) -> None:
     )
     scheduler.add_job(
         runner.sync_expired, 'interval', minutes=10, id=EXPIRY_SYNC, **common
+    )
+    scheduler.add_job(
+        runner.send_expiry_reminders,
+        'interval',
+        hours=1,
+        id=EXPIRY_NOTIFIER,
+        **common,
     )
     scheduler.add_job(
         runner.sweep_late_payments,

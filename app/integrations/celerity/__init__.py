@@ -10,6 +10,7 @@ from app.integrations.celerity.errors import (
 )
 from app.integrations.celerity.schemas import (
     PanelHealth,
+    PanelStats,
     PanelUser,
     ServerGroup,
     SubscriptionInfo,
@@ -24,6 +25,7 @@ __all__ = [
     'PanelHealth',
     'PanelNotFoundError',
     'PanelRateLimitedError',
+    'PanelStats',
     'PanelUnavailableError',
     'PanelUser',
     'ServerGroup',

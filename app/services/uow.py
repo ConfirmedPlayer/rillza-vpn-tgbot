@@ -4,7 +4,9 @@ from types import TracebackType
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.repositories.broadcasts import BroadcastsRepository
 from app.repositories.payments import PaymentsRepository
+from app.repositories.stats import StatsRepository
 from app.repositories.subscriptions import SubscriptionsRepository
 from app.repositories.tariffs import TariffsRepository
 from app.repositories.users import UsersRepository
@@ -32,6 +34,8 @@ class UnitOfWork:
         self.tariffs = TariffsRepository(self._session)
         self.subscriptions = SubscriptionsRepository(self._session)
         self.payments = PaymentsRepository(self._session)
+        self.broadcasts = BroadcastsRepository(self._session)
+        self.stats = StatsRepository(self._session)
         return self
 
     async def __aexit__(

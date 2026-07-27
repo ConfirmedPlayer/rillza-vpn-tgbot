@@ -25,6 +25,19 @@ TRIAL_CONFIRM = 'trial:confirm'
 SUBSCRIPTION = 'subscription'
 GUIDE = 'guide'
 SUPPORT = 'support'
+RENEW = 'renew'
+
+ADMIN_MENU = 'admin'
+ADMIN_STATS = 'admin:stats'
+ADMIN_TARIFFS = 'admin:tariffs'
+ADMIN_BROADCAST = 'admin:broadcast'
+ADMIN_BROADCAST_GO = 'admin:broadcast:go'
+ADMIN_FIND_USER = 'admin:find'
+ADMIN_USER_PREFIX = 'admin:user:'
+ADMIN_GRANT_PREFIX = 'admin:grant:'
+ADMIN_REVOKE_PREFIX = 'admin:revoke:'
+ADMIN_RESYNC_PREFIX = 'admin:resync:'
+ADMIN_RETRY_PREFIX = 'admin:retry:'
 
 
 def main_menu(trial_available: bool) -> InlineKeyboardMarkup:
@@ -150,4 +163,62 @@ def invoice(
     builder.row(
         InlineKeyboardButton(text='↩️ Главное меню', callback_data=MENU)
     )
+    return builder.as_markup()
+
+
+def expiring_soon() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text='🛒 Продлить', callback_data=BUY)
+    builder.button(text='🌐 Моя подписка', callback_data=SUBSCRIPTION)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_menu() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text='📊 Статистика', callback_data=ADMIN_STATS)
+    builder.button(text='👤 Найти пользователя', callback_data=ADMIN_FIND_USER)
+    builder.button(text='🧾 Тарифы', callback_data=ADMIN_TARIFFS)
+    builder.button(text='📣 Рассылка', callback_data=ADMIN_BROADCAST)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_back() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text='↩️ В админку', callback_data=ADMIN_MENU)
+    return builder.as_markup()
+
+
+def admin_user(
+    telegram_id: int, has_stuck_payment: bool
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for days in (30, 90):
+        builder.button(
+            text=f'➕ {days} дней',
+            callback_data=f'{ADMIN_GRANT_PREFIX}{telegram_id}:{days}',
+        )
+    builder.button(
+        text='⛔️ Отозвать', callback_data=f'{ADMIN_REVOKE_PREFIX}{telegram_id}'
+    )
+    builder.button(
+        text='🔄 Переподключить к серверам',
+        callback_data=f'{ADMIN_RESYNC_PREFIX}{telegram_id}',
+    )
+    if has_stuck_payment:
+        builder.button(
+            text='♻️ Повторить провижининг',
+            callback_data=f'{ADMIN_RETRY_PREFIX}{telegram_id}',
+        )
+    builder.button(text='↩️ В админку', callback_data=ADMIN_MENU)
+    builder.adjust(2, 1, 1, 1, 1)
+    return builder.as_markup()
+
+
+def admin_broadcast_confirm() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text='📣 Отправить всем', callback_data=ADMIN_BROADCAST_GO)
+    builder.button(text='↩️ Отмена', callback_data=ADMIN_MENU)
+    builder.adjust(1)
     return builder.as_markup()

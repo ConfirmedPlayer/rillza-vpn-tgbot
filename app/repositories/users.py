@@ -77,6 +77,19 @@ class UsersRepository:
             .execution_options(synchronize_session='fetch')
         )
 
+    async def find_by_username(self, username: str) -> User | None:
+        result = await self._session.execute(
+            select(User).where(func.lower(User.username) == username.lower())
+        )
+        return result.scalars().first()
+
+    async def count_reachable(self) -> int:
+        """Users a broadcast can actually reach."""
+        result = await self._session.execute(
+            select(func.count(User.id)).where(User.is_bot_blocked.is_(False))
+        )
+        return result.scalar_one()
+
     async def count(self) -> int:
         result = await self._session.execute(select(func.count(User.id)))
         return result.scalar_one()

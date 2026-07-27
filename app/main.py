@@ -61,7 +61,7 @@ def build_dispatcher(
     Tests pass an in-memory storage and a fake panel.
     """
     dispatcher = Dispatcher(storage=storage or build_storage(settings))
-    dispatcher.include_routers(*build_routers())
+    dispatcher.include_routers(*build_routers(settings))
 
     # Outer middlewares so the unit of work also covers filters.
     for observer in (dispatcher.message, dispatcher.callback_query):
@@ -89,7 +89,7 @@ async def run() -> None:
 
     scheduler = AsyncIOScheduler()
     register_jobs(
-        scheduler, JobRunner(session_factory, settings, panel, providers)
+        scheduler, JobRunner(session_factory, settings, panel, providers, bot)
     )
 
     log_bot = build_log_bot(settings)

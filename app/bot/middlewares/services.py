@@ -13,6 +13,7 @@ from aiogram.types import TelegramObject
 from app.core.settings import Settings
 from app.integrations.celerity import CelerityClient
 from app.integrations.payments import PaymentRegistry
+from app.services.broadcast_service import BroadcastService
 from app.services.payment_service import PaymentService
 from app.services.subscription_service import SubscriptionService
 from app.services.trial_service import TrialService
@@ -46,6 +47,9 @@ class ServicesMiddleware(BaseMiddleware):
             data['payments'] = PaymentService(
                 uow, self._providers, subscriptions, self._settings
             )
+            bot = data.get('bot')
+            if bot is not None:
+                data['broadcasts'] = BroadcastService(uow, bot)
         data['settings'] = self._settings
         data['panel'] = self._panel
         data['providers'] = self._providers

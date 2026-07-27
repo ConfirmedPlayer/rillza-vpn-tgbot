@@ -94,3 +94,34 @@ class PanelHealth(PanelModel):
     status: str = ''
     uptime: float | None = None
     is_syncing: bool = Field(default=False, alias='isSyncing')
+
+
+class NodeStatus(PanelModel):
+    name: str = ''
+    online: bool = False
+
+
+class PanelStats(PanelModel):
+    """Fleet health for the admin screen (scope stats:read)."""
+
+    online_users: int = Field(default=0, alias='onlineUsers')
+    nodes_list: list[NodeStatus] = Field(
+        default_factory=list, alias='nodesList'
+    )
+    users: dict[str, int] = Field(default_factory=dict)
+    nodes: dict[str, int] = Field(default_factory=dict)
+
+    @property
+    def nodes_total(self) -> int:
+        return self.nodes.get('total', len(self.nodes_list))
+
+    @property
+    def nodes_online(self) -> int:
+        return self.nodes.get(
+            'online', sum(1 for node in self.nodes_list if node.online)
+        )
+
+    @property
+    def offline_nodes(self) -> list[str]:
+        """A node that drops out silently disappears from subscriptions."""
+        return [node.name for node in self.nodes_list if not node.online]

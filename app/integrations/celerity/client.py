@@ -36,6 +36,7 @@ from app.integrations.celerity.errors import (
 )
 from app.integrations.celerity.schemas import (
     PanelHealth,
+    PanelStats,
     PanelUser,
     ServerGroup,
     SubscriptionInfo,
@@ -309,6 +310,11 @@ class CelerityClient:
         except PanelNotFoundError:
             return None
         return SubscriptionInfo.model_validate(payload)
+
+    async def stats(self) -> PanelStats:
+        """Fleet counters, including which nodes are offline."""
+        payload = await self._request('GET', '/api/stats')
+        return PanelStats.model_validate(payload)
 
     async def health(self) -> PanelHealth:
         payload = await self._request('GET', '/health', authorized=False)

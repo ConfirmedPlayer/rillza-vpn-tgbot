@@ -10,7 +10,9 @@ from datetime import datetime
 
 from app.integrations.celerity.errors import PanelUnavailableError
 from app.integrations.celerity.schemas import (
+    NodeStatus,
     PanelHealth,
+    PanelStats,
     PanelUser,
     ServerGroup,
     SubscriptionInfo,
@@ -30,6 +32,8 @@ class FakePanel:
         self.offline = False
         self.calls: list[str] = []
         self.info_traffic = Traffic(used=0, limit=0)
+        #: Flip to model a node dropping out of every subscription.
+        self.all_nodes_online = True
 
     def _guard(self, call: str) -> None:
         self.calls.append(call)
@@ -102,6 +106,18 @@ class FakePanel:
                     traffic=self.info_traffic,
                 )
         return None
+
+    async def stats(self) -> PanelStats:
+        self._guard('stats')
+        return PanelStats(
+            onlineUsers=len(self.users),
+            nodesList=[
+                NodeStatus(name='nl-1', online=True),
+                NodeStatus(name='nl-2', online=self.all_nodes_online),
+            ],
+            nodes={'total': 2, 'online': 2 if self.all_nodes_online else 1},
+            users={'total': len(self.users), 'enabled': len(self.users)},
+        )
 
     async def health(self) -> PanelHealth:
         self._guard('health')
