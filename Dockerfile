@@ -23,6 +23,7 @@ RUN --mount=from=uv,source=/uv,target=/bin/uv \
 COPY pyproject.toml uv.lock alembic.ini docker-entrypoint.sh ./
 COPY alembic ./alembic
 COPY app ./app
+COPY scripts ./scripts
 
 RUN chmod +x docker-entrypoint.sh \
     && useradd --create-home --uid 1000 rillza \

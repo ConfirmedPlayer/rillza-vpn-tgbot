@@ -52,6 +52,16 @@ uv run alembic revision --autogenerate -m "что изменилось"
 uv run alembic check   # проверить, что модели и миграции сошлись
 ```
 
+## Проверка панели
+
+Проверяет, что API-ключ работает и `PANEL_GROUP_NAME` совпадает с реальной
+серверной группой. Делает только GET-запросы, ничего не меняет:
+
+```bash
+uv run python -m scripts.check_panel
+docker compose exec bot python -m scripts.check_panel   # в контейнере
+```
+
 ## Настройки
 
 Все переменные окружения перечислены в [.env.example](.env.example).
