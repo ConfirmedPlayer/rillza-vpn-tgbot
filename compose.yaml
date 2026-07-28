@@ -1,3 +1,13 @@
+# Docker's default json-file driver never rotates. A bot that polls
+# payments every 30 seconds writes steadily for months, and the first
+# symptom of a full disk is Postgres refusing writes — which looks like
+# the bot losing payments, not like a logging problem.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   bot:
     build:
@@ -5,6 +15,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    logging: *logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -14,6 +25,7 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rillza}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -31,6 +43,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *logging
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
