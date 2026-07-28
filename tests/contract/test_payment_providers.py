@@ -36,6 +36,11 @@ def last_request(mocked):
     return list(mocked.requests.values())[-1][-1]
 
 
+def requested_paths(mocked) -> list[str]:
+    """Every path hit, in order. The key is (method, URL)."""
+    return [str(key[1].path) for key in mocked.requests]
+
+
 @pytest_asyncio.fixture
 async def yoomoney(make_settings):
     settings = make_settings(
@@ -168,6 +173,53 @@ class TestYooMoney:
         assert last_request(mocked).kwargs['params']['receiver'] == '4100999'
         await provider.close()
 
+    async def test_describe_account_reads_but_never_writes(
+        self, yoomoney, mocked
+    ) -> None:
+        """The credentials check must not be able to bill anyone."""
+        mocked.post(
+            'https://yoomoney.ru/api/account-info',
+            payload={
+                'account': '4100111111111',
+                'balance': 250.5,
+                'currency': '643',
+            },
+        )
+
+        described = await yoomoney.describe_account()
+
+        assert '4100111111111' in described
+        assert '250.5' in described
+        # One call, and it is the read-only one.
+        assert requested_paths(mocked) == ['/api/account-info']
+
+    async def test_non_json_body_is_a_payment_error(
+        self, yoomoney, mocked
+    ) -> None:
+        """A proxy in front of the API answers HTML with status 200.
+
+        Callers handle PaymentError and nothing else, so a JSON decode
+        error escaping here would crash a poll cycle instead of showing
+        "платёжная система не отвечает".
+        """
+        mocked.post(
+            'https://yoomoney.ru/api/account-info',
+            status=200,
+            body='<html>blocked</html>',
+        )
+
+        with pytest.raises(PaymentError):
+            await yoomoney.describe_account()
+
+    async def test_describe_account_rejects_an_empty_answer(
+        self, yoomoney, mocked
+    ) -> None:
+        """A revoked token answers 200 with nothing useful."""
+        mocked.post('https://yoomoney.ru/api/account-info', payload={})
+
+        with pytest.raises(PaymentError):
+            await yoomoney.describe_account()
+
 
 class TestCryptoBot:
     async def test_invoice_is_priced_in_rubles(
@@ -259,6 +311,49 @@ class TestCryptoBot:
 
         with pytest.raises(PaymentError):
             await cryptobot.create_invoice(PAYMENT_ID, 20_000, 'x', 30)
+
+    async def test_describe_account_names_the_app(
+        self, cryptobot, mocked
+    ) -> None:
+        mocked.post(
+            f'{CRYPTO}/getMe',
+            payload={
+                'ok': True,
+                'result': {
+                    'app_id': 42,
+                    'name': 'Rillza',
+                    'payment_processing_bot_username': 'CryptoBot',
+                },
+            },
+        )
+
+        described = await cryptobot.describe_account()
+
+        assert 'Rillza' in described
+        assert 'CryptoBot' in described
+        assert requested_paths(mocked) == ['/api/getMe']
+
+    async def test_non_json_body_is_a_payment_error(
+        self, cryptobot, mocked
+    ) -> None:
+        """CryptoBot parses before checking the status, so any error
+        page reaches the JSON decoder first."""
+        mocked.post(
+            f'{CRYPTO}/getMe', status=403, body='<html>forbidden</html>'
+        )
+
+        with pytest.raises(PaymentError):
+            await cryptobot.describe_account()
+
+    async def test_describe_account_surfaces_a_bad_token(
+        self, cryptobot, mocked
+    ) -> None:
+        mocked.post(
+            f'{CRYPTO}/getMe', payload={'ok': False, 'error': {'code': 401}}
+        )
+
+        with pytest.raises(PaymentError):
+            await cryptobot.describe_account()
 
     async def test_missing_token_is_refused(self, settings) -> None:
         with pytest.raises(PaymentError):

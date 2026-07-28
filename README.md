@@ -27,10 +27,13 @@ APScheduler · loguru · uv · Docker Compose
 
 ```bash
 cp .env.example .env
-# заполнить BOT_TOKEN, POSTGRES_PASSWORD, DATABASE_URL, PANEL_API_KEY
+# заполнить BOT_TOKEN, ADMIN_IDS, POSTGRES_PASSWORD, DATABASE_URL, PANEL_API_KEY
 docker compose up -d --build
 docker compose logs -f bot
 ```
+
+Откуда брать каждую переменную и чем проверить результат —
+[docs/SETUP.md](docs/SETUP.md).
 
 ## Локальная разработка
 
@@ -60,15 +63,24 @@ uv run alembic revision --autogenerate -m "что изменилось"
 uv run alembic check   # проверить, что модели и миграции сошлись
 ```
 
-## Проверка панели
+## Проверочные скрипты
 
-Проверяет, что API-ключ работает и `PANEL_GROUP_NAME` совпадает с реальной
-серверной группой. Делает только GET-запросы, ничего не меняет:
+Оба только читают: ничего не создают, не меняют и не списывают. Возвращают
+код `0` при успехе и `1` при проблеме, так что годятся для деплой-скрипта.
 
 ```bash
-uv run python -m scripts.check_panel
-docker compose exec bot python -m scripts.check_panel   # в контейнере
+uv run python -m scripts.check_panel      # доступность, ключ, группа, лимит устройств
+uv run python -m scripts.check_payments   # кому принадлежат платёжные токены
+
+docker compose exec bot python -m scripts.check_panel      # то же в контейнере
+docker compose exec bot python -m scripts.check_payments
 ```
+
+Лимит устройств живёт на группе, а `GET /api/groups` отдаёт только id и
+имя — поэтому `check_panel` читает его через существующий аккаунт и
+отдельно показывает, кто из аккаунтов переопределяет его своим
+`maxDevices`. Пока на панели нет ни одного аккаунта, проверка честно
+говорит, что сказать нечего.
 
 ## Настройки
 
@@ -111,7 +123,8 @@ app/
 ├── scheduler/      фоновые задачи
 └── main.py         сборка и запуск
 alembic/            миграции
-scripts/            проверка панели
+docs/               SETUP.md — откуда брать переменные окружения
+scripts/            проверки панели и платёжных ключей
 tests/              unit + contract + integration (нужен Postgres)
 ```
 

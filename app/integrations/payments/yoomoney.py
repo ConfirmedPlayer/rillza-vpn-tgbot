@@ -72,7 +72,15 @@ class YooMoneyProvider:
                     raise PaymentError(
                         f'YooMoney {url} answered HTTP {response.status}'
                     )
-                return await response.json(content_type=None)
+                try:
+                    return await response.json(content_type=None)
+                except ValueError as error:
+                    # 200 with an HTML body: a captive portal or a proxy
+                    # standing in front of the API. PaymentError is the
+                    # only failure callers know how to handle.
+                    raise PaymentError(
+                        f'YooMoney {url} answered 200 with a non-JSON body'
+                    ) from error
         except aiohttp.ClientError as error:
             raise PaymentError(f'YooMoney unreachable: {error!r}') from error
         except TimeoutError as error:
@@ -88,6 +96,23 @@ class YooMoneyProvider:
             raise PaymentError('YooMoney account-info returned no account')
         self._wallet = str(account)
         return self._wallet
+
+    async def describe_account(self) -> str:
+        """Wallet and balance — proves the token carries both scopes.
+
+        ``account-info`` needs the scope of the same name; the balance it
+        returns is also the only read that tells a live token from one
+        that was revoked in the YooMoney cabinet.
+        """
+        payload = await self._api(ACCOUNT_INFO_URL, {})
+        if not isinstance(payload, dict) or not payload.get('account'):
+            raise PaymentError('YooMoney account-info returned no account')
+        balance = payload.get('balance')
+        currency = payload.get('currency', '')
+        wallet = str(payload['account'])
+        if balance is None:
+            return f'wallet {wallet}'
+        return f'wallet {wallet}, balance {balance} {currency}'.rstrip()
 
     async def create_invoice(
         self,

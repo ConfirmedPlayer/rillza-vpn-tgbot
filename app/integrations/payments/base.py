@@ -79,4 +79,13 @@ class PaymentProvider(Protocol):
         self, payment_id: UUID, provider_invoice_id: str | None = None
     ) -> PaymentCheck: ...
 
+    async def describe_account(self) -> str:
+        """Who the token belongs to, for a credentials check.
+
+        Read-only by contract: it must never create or move money, so a
+        misconfigured deployment can be diagnosed without issuing a real
+        invoice to somebody.
+        """
+        ...
+
     async def close(self) -> None: ...

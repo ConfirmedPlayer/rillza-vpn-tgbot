@@ -60,7 +60,17 @@ class CryptoBotProvider:
                 json=payload,
                 headers={'Crypto-Pay-API-Token': self._token},
             ) as response:
-                body = await response.json(content_type=None)
+                try:
+                    body = await response.json(content_type=None)
+                except ValueError as error:
+                    # A proxy, a WAF or a maintenance page answers HTML.
+                    # Callers only handle PaymentError, so letting a
+                    # JSONDecodeError out turns a provider hiccup into a
+                    # crashed poll or a bare "что-то пошло не так".
+                    raise PaymentError(
+                        f'CryptoBot {method} answered HTTP {response.status} '
+                        'with a non-JSON body'
+                    ) from error
         except aiohttp.ClientError as error:
             raise PaymentError(f'CryptoBot unreachable: {error!r}') from error
         except TimeoutError as error:
@@ -70,6 +80,15 @@ class CryptoBotProvider:
             error = body.get('error') if isinstance(body, dict) else body
             raise PaymentError(f'CryptoBot {method} failed: {error}')
         return body.get('result')
+
+    async def describe_account(self) -> str:
+        """The app the token belongs to. Creates nothing."""
+        result = await self._api('getMe', {})
+        if not isinstance(result, dict):
+            raise PaymentError('CryptoBot getMe returned no app')
+        name = result.get('name') or result.get('app_id') or '?'
+        bot = result.get('payment_processing_bot_username')
+        return f'app {name}' + (f' via @{bot}' if bot else '')
 
     async def create_invoice(
         self,
