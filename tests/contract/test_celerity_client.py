@@ -163,13 +163,13 @@ class TestRetries:
 
 class TestGroups:
     async def test_group_is_resolved_by_name_and_cached(
-        self, client, mocked
+        self, client, mocked, settings
     ) -> None:
         mocked.get(
             f'{BASE}/api/groups',
             payload=[
                 {'_id': 'other', 'name': 'Другая'},
-                {'_id': GROUP_ID, 'name': 'Rillza'},
+                {'_id': GROUP_ID, 'name': settings.panel_group_name},
             ],
         )
 
@@ -181,7 +181,9 @@ class TestGroups:
         assert len(list(mocked.requests.values())[-1]) == 1
         await client.close()
 
-    async def test_missing_group_is_an_error(self, client, mocked) -> None:
+    async def test_missing_group_is_an_error(
+        self, client, mocked, settings
+    ) -> None:
         mocked.get(
             f'{BASE}/api/groups', payload=[{'_id': 'x', 'name': 'Иная'}]
         )
@@ -189,13 +191,13 @@ class TestGroups:
         with pytest.raises(PanelNotFoundError) as error:
             await client.resolve_group_id()
 
-        assert 'Rillza' in str(error.value)
+        assert settings.panel_group_name in str(error.value)
         await client.close()
 
 
 class TestCreateUser:
     async def test_create_sends_enabled_and_groups_together(
-        self, client, mocked
+        self, client, mocked, settings
     ) -> None:
         """The invariant that silently breaks VLESS when violated.
 
@@ -204,7 +206,8 @@ class TestCreateUser:
         that same request.
         """
         mocked.get(
-            f'{BASE}/api/groups', payload=[{'_id': GROUP_ID, 'name': 'Rillza'}]
+            f'{BASE}/api/groups',
+            payload=[{'_id': GROUP_ID, 'name': settings.panel_group_name}],
         )
         mocked.post(f'{BASE}/api/users', status=201, payload=user_payload())
 

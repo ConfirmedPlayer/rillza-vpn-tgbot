@@ -60,7 +60,7 @@ def test_blank_values_do_not_override_defaults(monkeypatch) -> None:
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
     assert settings.redis_url == 'redis://redis:6379/0'
-    assert settings.panel_group_name == 'Rillza'
+    assert settings.panel_group_name == 'Celerity Primary Access'
 
 
 def test_shipped_env_example_starts_the_bot(tmp_path, monkeypatch) -> None:
@@ -84,6 +84,10 @@ def test_shipped_env_example_starts_the_bot(tmp_path, monkeypatch) -> None:
     assert settings.bot_token.get_secret_value() == BASE_ENV['bot_token']
     assert settings.telegram_logging_enabled is False
     assert build_log_bot(settings) is None
+    # The real group name carries spaces. Quoting it, or letting a
+    # parser stop at the first one, resolves to no group at all — and
+    # accounts created that way never reach a node.
+    assert settings.panel_group_name == 'Celerity Primary Access'
 
 
 @pytest.mark.parametrize(

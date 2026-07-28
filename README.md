@@ -86,8 +86,10 @@ docker compose exec bot python -m scripts.check_panel   # в контейнер�
 
 1. **API-ключ** — Settings → Security → API Keys, скоупы `users:read`,
    `users:write`, `stats:read`. Значение в `PANEL_API_KEY`.
-2. **Серверная группа** (по умолчанию `Rillza`) с `maxDevices = 2` —
-   новые пользователи привязываются к ней, имя в `PANEL_GROUP_NAME`.
+2. **Серверная группа** (по умолчанию `Celerity Primary Access`) с
+   `maxDevices = 2` — новые пользователи привязываются к ней, имя в
+   `PANEL_GROUP_NAME`. Имя сверяется точно: если оно не совпадает,
+   аккаунт создаётся вообще без группы и его VLESS не уезжает на ноду.
 3. **Кнопка Happ** — Settings → Subscription → Buttons → кнопка `HAPP`
    с URL `happ://add/{url}`. Через неё подписка импортируется в
    приложение в одно нажатие.

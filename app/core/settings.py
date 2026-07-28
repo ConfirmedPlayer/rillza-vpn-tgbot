@@ -40,7 +40,11 @@ class Settings(BaseSettings):
     # --- CELERITY panel -------------------------------------------------
     panel_base_url: str
     panel_api_key: SecretStr
-    panel_group_name: str = 'Rillza'
+    #: Matched against the panel's group names, not its ids. Verify with
+    #: ``python -m scripts.check_panel`` — a name that resolves to
+    #: nothing means new accounts land in no group at all, and their
+    #: VLESS entries are never pushed to a node.
+    panel_group_name: str = 'Celerity Primary Access'
 
     # --- Product --------------------------------------------------------
     trial_days: int = 3

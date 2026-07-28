@@ -84,5 +84,5 @@ def test_telegram_logging_enabled_with_credentials(make_settings) -> None:
 def test_product_defaults(settings) -> None:
     assert settings.trial_days == 3
     assert settings.invoice_ttl_minutes == 30
-    assert settings.panel_group_name == 'Rillza'
+    assert settings.panel_group_name == 'Celerity Primary Access'
     assert settings.yoomoney_payment_type == 'AC'
