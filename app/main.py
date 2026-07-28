@@ -23,7 +23,7 @@ from app.db.engine import build_engine, build_session_factory
 from app.integrations.celerity import CelerityClient
 from app.integrations.payments import PaymentRegistry
 from app.scheduler.jobs import JobRunner, register_jobs
-from app.services.rate_limit import RateLimiter
+from app.services.rate_limit import RateLimiter, RedisRateLimiter
 
 
 def _dumps(value: object) -> str:
@@ -87,7 +87,15 @@ async def run() -> None:
     panel = CelerityClient(settings)
     providers = PaymentRegistry.from_settings(settings)
     bot = build_bot(settings)
-    dispatcher = build_dispatcher(settings, session_factory, panel, providers)
+    storage = build_storage(settings)
+    dispatcher = build_dispatcher(
+        settings,
+        session_factory,
+        panel,
+        providers,
+        storage=storage,
+        limiter=RedisRateLimiter(storage.redis),
+    )
 
     scheduler = AsyncIOScheduler()
     register_jobs(

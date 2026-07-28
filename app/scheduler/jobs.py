@@ -81,6 +81,9 @@ class JobRunner:
             except Exception as exc:  # a job must never kill the loop
                 error = repr(exc)
                 logger.exception('Job {} failed', name)
+                # The session may be poisoned (or hold partial writes);
+                # start clean so the heartbeat itself can be recorded.
+                await uow.rollback()
             await self._heartbeat(uow, name, error)
 
     async def poll_payments(self) -> None:

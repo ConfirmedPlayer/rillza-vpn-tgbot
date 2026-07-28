@@ -7,9 +7,11 @@ days — whatever crashes next. That rests on three things.
   the "проверить оплату" button and the poller. It takes the row with
   ``FOR UPDATE SKIP LOCKED``, so a second tap bounces with BUSY instead
   of queueing behind an HTTP call and provisioning twice.
-* ``target_expires_at`` is computed once, when the payment turns paid,
-  and never recomputed. A retry that recalculated "now + 30 days" would
-  hand out a second month for one payment.
+* the payment carries a ``days_applied_at`` latch, written in the same
+  transaction as the new expiry. That, not a date comparison, is what
+  makes provisioning idempotent: a retry knows whether *its* days are
+  already in there, so it can neither add them twice nor shrink an
+  expiry another payment or an admin grant has since moved forward.
 * ``paid`` is a real status, so "money taken, access not delivered" is a
   queryable state and the watcher can finish it after any crash.
 """
@@ -21,9 +23,13 @@ from enum import Enum, auto
 
 from loguru import logger
 
-from app.core.enums import PaymentStatus, SubscriptionOrigin
+from app.core.enums import (
+    PaymentStatus,
+    SubscriptionOrigin,
+    SubscriptionStatus,
+)
 from app.core.settings import Settings
-from app.db.models import Payment, Tariff
+from app.db.models import Payment, Subscription, Tariff
 from app.integrations.celerity import PanelError
 from app.integrations.payments import PaymentError, PaymentRegistry
 from app.services.subscription_service import SubscriptionService, utcnow
@@ -111,9 +117,21 @@ class PaymentService:
     # --- finalising ---------------------------------------------------
 
     async def check_and_finalize(
-        self, payment_id: uuid.UUID
+        self, payment_id: uuid.UUID, telegram_id: int | None = None
     ) -> FinalizeResult:
-        """The single funnel from "invoice" to "access granted"."""
+        """The single funnel from "invoice" to "access granted".
+
+        ``telegram_id`` scopes the call to one person: a payment id is
+        guessable-adjacent (it travels in callback data), so a request
+        coming from a user must not touch anyone else's payment.
+        Background jobs pass None because they act for everyone.
+        """
+        owned = await self._uow.payments.get(payment_id)
+        if telegram_id is not None and (
+            owned is None or owned.user_id != telegram_id
+        ):
+            return FinalizeResult(FinalizeOutcome.UNKNOWN)
+
         payment = await self._uow.payments.lock_for_finalize(payment_id)
         if payment is None:
             # Either no such payment, or another worker holds the row.
@@ -175,6 +193,9 @@ class PaymentService:
         if subscription is not None and subscription.expires_at > now:
             # Renewing early must not throw away the remaining days.
             base = subscription.expires_at
+        # A projection recorded with the payment. The days themselves are
+        # applied in _apply_days against the expiry as it is then, so a
+        # concurrent payment cannot make this figure authoritative.
         target = base + timedelta(days=tariff.duration_days)
 
         updated = await self._uow.payments.mark_paid(
@@ -194,27 +215,64 @@ class PaymentService:
             )
         return updated
 
+    async def _apply_days(self, payment: Payment) -> Subscription:
+        """Add this payment's days to the subscription, exactly once.
+
+        The latch lives on the payment row and is written in the same
+        transaction as the new expiry, so a retry can tell "my days are
+        already in there" from "someone else moved the date". Inferring
+        that from dates alone is what let a retried older payment shrink
+        a subscription, and let an admin grant swallow a payment.
+
+        The duration is added to the expiry as it stands *now*, never to
+        a value captured earlier, so concurrent payments accumulate
+        instead of overwriting each other.
+        """
+        tariff = await self._uow.tariffs.get(payment.tariff_id)
+        if tariff is None:  # pragma: no cover - FK guarantees it exists
+            raise PaymentError(f'tariff {payment.tariff_id} vanished')
+
+        now = utcnow()
+        # Serialise everything touching this user's subscription.
+        subscription = await self._uow.subscriptions.lock_by_user(
+            payment.user_id
+        )
+
+        if payment.days_applied_at is not None:
+            if subscription is None:  # pragma: no cover - inconsistent state
+                raise PaymentError(
+                    f'payment {payment.id} applied without a subscription'
+                )
+            return subscription
+
+        duration = timedelta(days=tariff.duration_days)
+        if subscription is None:
+            subscription = await self._subscriptions.create_pending(
+                payment.user_id,
+                expires_at=now + duration,
+                origin=SubscriptionOrigin.PURCHASE,
+            )
+        else:
+            base = max(now, subscription.expires_at)
+            subscription.expires_at = base + duration
+            subscription.status = SubscriptionStatus.ACTIVE
+            # A renewal restarts the reminder cycle.
+            subscription.notified_stage = None
+
+        await self._uow.payments.mark_days_applied(payment.id, now)
+        # One transaction: the days and the latch land together.
+        await self._uow.commit()
+        return subscription
+
     async def _provision(self, payment: Payment) -> FinalizeResult:
         """Deliver the days recorded on the payment. Safe to repeat."""
-        target = payment.target_expires_at
-        if target is None:  # pragma: no cover - set together with 'paid'
-            raise PaymentError(
-                f'payment {payment.id} is paid without a target'
-            )
-
         try:
-            subscription = await self._subscriptions.get(payment.user_id)
-            if subscription is None:
-                subscription = await self._subscriptions.create_pending(
-                    payment.user_id,
-                    expires_at=target,
-                    origin=SubscriptionOrigin.PURCHASE,
-                )
+            subscription = await self._apply_days(payment)
+            if subscription.subscription_token is None:
                 await self._subscriptions.provision(subscription)
-            elif subscription.expires_at != target:
-                await self._subscriptions.extend(subscription, target)
-            elif subscription.subscription_token is None:
-                await self._subscriptions.provision(subscription)
+            else:
+                # Always push the row as it stands, never a stale target.
+                await self._subscriptions.push_expiry(subscription)
         except PanelError as error:
             logger.warning(
                 'Payment {} is paid but the panel is unreachable: {}',
@@ -222,12 +280,16 @@ class PaymentService:
                 error,
             )
             return FinalizeResult(
-                FinalizeOutcome.PAID_PENDING_PROVISIONING, payment, target
+                FinalizeOutcome.PAID_PENDING_PROVISIONING,
+                payment,
+                payment.target_expires_at,
             )
 
         await self._uow.payments.mark_provisioned(payment.id, utcnow())
         await self._uow.commit()
-        return FinalizeResult(FinalizeOutcome.PROVISIONED, payment, target)
+        return FinalizeResult(
+            FinalizeOutcome.PROVISIONED, payment, subscription.expires_at
+        )
 
     # --- background sweeps --------------------------------------------
 

@@ -5,6 +5,8 @@ with no trace of who wrote it. Progress is checkpointed by user id, so a
 restart continues where it stopped instead of spamming everyone again.
 """
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from aiogram import Bot
@@ -43,7 +45,11 @@ class BroadcastService:
         await self._uow.commit()
         return broadcast
 
-    async def run(self, broadcast: Broadcast, sleep=None) -> BroadcastReport:
+    async def run(
+        self,
+        broadcast: Broadcast,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> BroadcastReport:
         """Send to everyone, resuming from the stored cursor."""
         broadcast.status = BroadcastStatus.RUNNING
         await self._uow.commit()
@@ -83,8 +89,7 @@ class BroadcastService:
             await self._copy(telegram_id, broadcast)
         except TelegramRetryAfter as error:
             # Respect flood control, then give this user one more try.
-            if sleep is not None:
-                await sleep(error.retry_after + 1)
+            await sleep(error.retry_after + 1)
             try:
                 await self._copy(telegram_id, broadcast)
             except Exception as retry_error:

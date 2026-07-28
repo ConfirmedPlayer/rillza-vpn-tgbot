@@ -4,8 +4,13 @@ from pydantic import ValidationError
 from tests.conftest import BASE_ENV
 
 
-def test_required_fields_are_enforced() -> None:
+def test_required_fields_are_enforced(monkeypatch) -> None:
+    """CI exports a full config, so the environment must be cleared first —
+    otherwise this passed locally and failed on every clean CI run."""
     from app.core.settings import Settings
+
+    for key in BASE_ENV:
+        monkeypatch.delenv(key.upper(), raising=False)
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)  # type: ignore[call-arg]

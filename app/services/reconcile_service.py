@@ -104,7 +104,12 @@ class ReconcileService:
         panel_user: PanelUser | None,
         report: ReconcileReport,
     ) -> None:
-        revoked = subscription.status == SubscriptionStatus.REVOKED
+        revoked = subscription.status in (
+            SubscriptionStatus.REVOKED,
+            # An expired subscription is equally 'must not be active':
+            # recreating or extending it would hand access back for free.
+            SubscriptionStatus.EXPIRED,
+        )
 
         if panel_user is None:
             if revoked:

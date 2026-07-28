@@ -86,6 +86,26 @@ class PaymentsRepository:
         )
         return result.scalar_one_or_none()
 
+    async def mark_days_applied(
+        self, payment_id: uuid.UUID, moment: datetime
+    ) -> Payment | None:
+        """Latch this payment's days as applied; a repeat gets None.
+
+        Callers set it in the same transaction that writes the new
+        subscription expiry, which is what makes provisioning idempotent
+        without having to infer it from dates.
+        """
+        result = await self._session.execute(
+            _returning(
+                update(Payment)
+                .where(
+                    Payment.id == payment_id, Payment.days_applied_at.is_(None)
+                )
+                .values(days_applied_at=moment)
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def mark_provisioned(
         self, payment_id: uuid.UUID, moment: datetime
     ) -> Payment | None:

@@ -171,17 +171,21 @@ class TestFinalize:
         stored = await uow.payments.get(payment.id)
         assert stored is not None
         assert stored.status == PaymentStatus.PAID
-        assert stored.target_expires_at is not None
-        target = stored.target_expires_at
+        # The days are already in the subscription and latched to this
+        # payment, so the retry knows not to add them a second time.
+        assert stored.days_applied_at is not None
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        granted = subscription.expires_at
 
         panel.offline = False
         finished = await payments.finish_provisioning()
 
         assert finished == 1
-        subscription = await uow.subscriptions.get_by_user(USER_ID)
-        assert subscription is not None
-        # The frozen target survived: no extra days for the delay.
-        assert subscription.expires_at == target
+        # Same days delivered: no extra month for the delay, and none
+        # taken away either.
+        assert subscription.expires_at == granted
+        assert panel.users[str(USER_ID)].expire_at == granted
 
     async def test_renewal_adds_to_the_remaining_days(
         self, payments, seeded_tariffs, provider, uow
@@ -301,3 +305,108 @@ class TestPoller:
         stored = await uow.payments.get(paid.id)
         assert stored is not None
         assert stored.status == PaymentStatus.PROVISIONED
+
+
+class TestProvisioningIsMonotonic:
+    """Regressions from the pre-launch review.
+
+    Provisioning used to compare dates to decide what to do, which let a
+    retried older payment move a subscription backwards and let an admin
+    grant swallow a payment. The payment now carries its own
+    days-applied latch.
+    """
+
+    async def test_stuck_older_payment_never_shrinks_the_subscription(
+        self, payments, seeded_tariffs, provider, panel, uow
+    ) -> None:
+        tariff = seeded_tariffs[0]
+        first = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.mark_paid(first.id)
+        panel.offline = True
+        # First payment: days land in the database, panel push fails.
+        await payments.check_and_finalize(first.id)
+        panel.offline = False
+
+        second = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.mark_paid(second.id)
+        await payments.check_and_finalize(second.id)
+
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        after_both = subscription.expires_at
+
+        # The watcher now retries the older, still-PAID payment.
+        await payments.finish_provisioning()
+
+        assert subscription.expires_at == after_both
+        assert panel.users[str(USER_ID)].expire_at == after_both
+        # Both payments delivered a full month each.
+        assert (after_both - datetime.now(UTC)).days == 59
+
+    async def test_admin_grant_is_not_erased_by_a_retry(
+        self, payments, seeded_tariffs, provider, panel, uow, app_settings
+    ) -> None:
+        from app.services.subscription_service import SubscriptionService
+
+        payment = await payments.create_invoice(
+            USER_ID, seeded_tariffs[0], 'yoomoney'
+        )
+        provider.mark_paid(payment.id)
+        panel.offline = True
+        await payments.check_and_finalize(payment.id)
+        panel.offline = False
+
+        subscriptions = SubscriptionService(uow, panel, app_settings)
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        granted_until = subscription.expires_at + timedelta(days=60)
+        await subscriptions.extend(subscription, granted_until)
+
+        await payments.finish_provisioning()
+
+        assert subscription.expires_at == granted_until
+
+    async def test_retry_repairs_a_panel_that_missed_the_renewal(
+        self, payments, seeded_tariffs, provider, panel, uow
+    ) -> None:
+        """The panel must end up holding the new date, not the old one."""
+        tariff = seeded_tariffs[0]
+        first = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.mark_paid(first.id)
+        await payments.check_and_finalize(first.id)
+        after_first = panel.users[str(USER_ID)].expire_at
+
+        renewal = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.mark_paid(renewal.id)
+        panel.offline = True
+        await payments.check_and_finalize(renewal.id)
+        # Database moved on, panel is still on the old date.
+        assert panel.users[str(USER_ID)].expire_at == after_first
+
+        panel.offline = False
+        await payments.finish_provisioning()
+
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        assert panel.users[str(USER_ID)].expire_at == subscription.expires_at
+        stored = await uow.payments.get(renewal.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.PROVISIONED
+
+    async def test_days_are_applied_exactly_once(
+        self, payments, seeded_tariffs, provider, uow
+    ) -> None:
+        payment = await payments.create_invoice(
+            USER_ID, seeded_tariffs[0], 'yoomoney'
+        )
+        provider.mark_paid(payment.id)
+
+        await payments.check_and_finalize(payment.id)
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        once = subscription.expires_at
+
+        for _ in range(3):
+            await payments.check_and_finalize(payment.id)
+
+        assert subscription.expires_at == once

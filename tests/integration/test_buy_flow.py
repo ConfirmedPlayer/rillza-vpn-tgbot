@@ -171,3 +171,39 @@ async def test_purchase_is_hidden_when_no_provider_is_configured(
     assert any(
         'Оплата временно недоступна' in text for text in edited_texts(session)
     )
+
+
+async def test_a_payment_cannot_be_finalized_by_another_user(
+    dispatcher, bot, session, session_factory, seeded_tariffs, provider
+) -> None:
+    """Payment ids travel in callback data — knowing one must not be
+    enough to touch someone else's payment."""
+    from tests.integration.test_trial_flow import callback_update
+
+    await dispatcher.feed_update(
+        bot,
+        callback_update(
+            f'{keyboards.PROVIDER_PREFIX}{seeded_tariffs[0].id}:yoomoney'
+        ),
+    )
+    async with UnitOfWork(session_factory) as uow:
+        payment = (await uow.payments.list_by_user(USER_ID))[0]
+    provider.mark_paid(payment.id)
+    session.requests.clear()
+
+    stranger = 999
+    await dispatcher.feed_update(
+        bot,
+        callback_update(
+            f'{keyboards.CHECK_PREFIX}{payment.id}', user_id=stranger
+        ),
+    )
+
+    # Refused, and nothing was provisioned for anyone.
+    assert any('не найден' in alert for alert in alerts(session))
+    async with UnitOfWork(session_factory) as uow:
+        stored = await uow.payments.get(payment.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.PENDING
+        assert await uow.subscriptions.get_by_user(stranger) is None
+        assert await uow.subscriptions.get_by_user(USER_ID) is None

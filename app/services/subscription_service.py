@@ -18,7 +18,11 @@ from loguru import logger
 from app.core.enums import SubscriptionOrigin, SubscriptionStatus
 from app.core.settings import Settings
 from app.db.models import Subscription
-from app.integrations.celerity import CelerityClient, PanelError
+from app.integrations.celerity import (
+    CelerityClient,
+    PanelError,
+    PanelNotFoundError,
+)
 from app.integrations.celerity.schemas import SubscriptionInfo
 from app.services.uow import UnitOfWork
 
@@ -108,16 +112,38 @@ class SubscriptionService:
     async def extend(
         self, subscription: Subscription, until: datetime
     ) -> Subscription:
-        """Move the expiry to an absolute date computed by the caller."""
-        subscription.expires_at = until
+        """Move the expiry forward, then push it to the panel.
+
+        Never moves backwards: a stale caller (a retried older payment, a
+        reconciler working from an old read) must not take away days the
+        subscription already has.
+        """
+        if until > subscription.expires_at:
+            subscription.expires_at = until
         subscription.status = SubscriptionStatus.ACTIVE
         # A renewal starts the reminder cycle over.
         subscription.notified_stage = None
         await self._uow.commit()
 
-        panel_user = await self._panel.set_expiry(
-            subscription.panel_user_id, until
-        )
+        await self.push_expiry(subscription)
+        return subscription
+
+    async def push_expiry(self, subscription: Subscription) -> Subscription:
+        """Make the panel agree with the row as it stands right now.
+
+        Sends the subscription's own date rather than any caller-held
+        value, so a retry can never install an outdated expiry.
+        """
+        try:
+            panel_user = await self._panel.set_expiry(
+                subscription.panel_user_id, subscription.expires_at
+            )
+        except PanelNotFoundError:
+            # No account yet (an earlier provisioning failed) or it was
+            # removed in the panel: create it rather than lose the days.
+            panel_user, _ = await self._panel.create_or_get_user(
+                subscription.panel_user_id, expire_at=subscription.expires_at
+            )
         subscription.subscription_token = (
             panel_user.subscription_token or subscription.subscription_token
         )

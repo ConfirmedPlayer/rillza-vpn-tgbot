@@ -121,7 +121,9 @@ async def handle_check(
         await query.answer(ru.PAYMENT_UNKNOWN, show_alert=True)
         return
 
-    result = await payments.check_and_finalize(payment_id)
+    result = await payments.check_and_finalize(
+        payment_id, telegram_id=query.from_user.id
+    )
 
     if result.outcome is FinalizeOutcome.BUSY:
         # Another tap (or the poller) already holds the row: say so

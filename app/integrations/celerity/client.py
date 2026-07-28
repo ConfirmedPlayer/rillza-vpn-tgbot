@@ -49,6 +49,8 @@ DEFAULT_ATTEMPTS = 3
 DEFAULT_BACKOFF = 1.0
 #: Warn when the key's per-minute budget gets this low.
 RATE_LIMIT_WARN_THRESHOLD = 10
+#: Paths whose last segment is a secret and must not be logged.
+SECRET_PATH_PREFIXES = ('/api/info/', '/api/files/')
 
 
 class CelerityClient:
@@ -93,6 +95,14 @@ class CelerityClient:
 
     def _url(self, path: str) -> str:
         return f'{self._base_url}{path}'
+
+    @staticmethod
+    def _safe_path(path: str) -> str:
+        """Hide the subscription token: it is the user's credential."""
+        for prefix in SECRET_PATH_PREFIXES:
+            if path.startswith(prefix):
+                return f'{prefix}<token>'
+        return path
 
     @staticmethod
     def _error_message(payload: Any, fallback: str) -> str:
@@ -191,7 +201,7 @@ class CelerityClient:
             logger.warning(
                 'CELERITY {} {} failed ({}), retry {}/{} in {:.1f}s',
                 method,
-                path,
+                self._safe_path(path),
                 last_error,
                 attempt,
                 self._attempts - 1,

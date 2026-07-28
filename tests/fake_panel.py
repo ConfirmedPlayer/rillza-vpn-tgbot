@@ -8,7 +8,10 @@ can be armed to exercise the degraded paths.
 import secrets
 from datetime import datetime
 
-from app.integrations.celerity.errors import PanelUnavailableError
+from app.integrations.celerity.errors import (
+    PanelNotFoundError,
+    PanelUnavailableError,
+)
 from app.integrations.celerity.schemas import (
     NodeStatus,
     PanelHealth,
@@ -39,6 +42,13 @@ class FakePanel:
         self.calls.append(call)
         if self.offline:
             raise PanelUnavailableError('fake panel is offline')
+
+    def _require(self, panel_user_id: str) -> PanelUser:
+        """The real panel answers 404, not a KeyError."""
+        user = self.users.get(panel_user_id)
+        if user is None:
+            raise PanelNotFoundError('Пользователь не найден', 404)
+        return user
 
     async def resolve_group_id(self, refresh: bool = False) -> str:
         self._guard('resolve_group_id')
@@ -87,7 +97,7 @@ class FakePanel:
         self, panel_user_id: str, expire_at: datetime | None
     ) -> PanelUser:
         self._guard(f'set_expiry:{panel_user_id}')
-        user = self.users[panel_user_id]
+        user = self._require(panel_user_id)
         updated = user.model_copy(
             update={'expire_at': expire_at, 'enabled': True}
         )
@@ -96,7 +106,7 @@ class FakePanel:
 
     async def revoke(self, panel_user_id: str) -> PanelUser:
         self._guard(f'revoke:{panel_user_id}')
-        user = self.users[panel_user_id]
+        user = self._require(panel_user_id)
         updated = user.model_copy(update={'enabled': False})
         self.users[panel_user_id] = updated
         return updated

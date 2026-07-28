@@ -1,6 +1,7 @@
 """Support texts, both sides."""
 
 from datetime import datetime
+from html import escape
 
 from app.bot.texts.ru import format_date, format_left
 from app.core.enums import PaymentStatus
@@ -36,8 +37,10 @@ def render_card(user, subscription, payments, now: datetime) -> str:
     if user is None:
         return '👤 Неизвестный пользователь'
 
-    name = user.first_name or '—'
-    username = f'@{user.username}' if user.username else 'без username'
+    # Names come from Telegram and may contain markup: escape them or a
+    # user can break the card, or inject HTML into the admin's chat.
+    name = escape(user.first_name or '—')
+    username = f'@{escape(user.username)}' if user.username else 'без username'
     lines = [
         f'💬 <b>Обращение</b> от {name} · {username}',
         f'ID: <code>{user.id}</code>',

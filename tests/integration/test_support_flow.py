@@ -68,7 +68,9 @@ async def dispatcher(settings_with_admin, session_factory, panel):
     )
 
 
-def user_message(text: str, user_id: int = CUSTOMER_ID) -> Update:
+def user_message(
+    text: str, user_id: int = CUSTOMER_ID, first_name: str = 'Иван'
+) -> Update:
     return Update(
         update_id=1,
         message=Message(
@@ -76,7 +78,10 @@ def user_message(text: str, user_id: int = CUSTOMER_ID) -> Update:
             date=datetime.now(UTC),
             chat=Chat(id=user_id, type='private'),
             from_user=TelegramUser(
-                id=user_id, is_bot=False, first_name='Иван', username='ivan'
+                id=user_id,
+                is_bot=False,
+                first_name=first_name,
+                username='ivan',
             ),
             text=text,
         ),
@@ -389,3 +394,20 @@ class TestThreadHistory:
 
         card = texts_to(session, ADMIN_ID)[0]
         assert 'Подписка: active' in card
+
+
+async def test_display_names_cannot_inject_html(
+    dispatcher, bot, session, session_factory
+) -> None:
+    """A name is attacker-controlled and lands in an HTML message."""
+    hostile = '<b>x</b><a href="http://evil">tap</a>'
+
+    await open_support(dispatcher, bot)
+    session.requests.clear()
+    await dispatcher.feed_update(
+        bot, user_message('привет', first_name=hostile)
+    )
+
+    card = texts_to(session, ADMIN_ID)[0]
+    assert '<a href' not in card
+    assert '&lt;b&gt;' in card

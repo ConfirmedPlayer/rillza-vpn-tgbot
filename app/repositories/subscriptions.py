@@ -21,6 +21,19 @@ class SubscriptionsRepository:
         )
         return result.scalar_one_or_none()
 
+    async def lock_by_user(self, telegram_id: int) -> Subscription | None:
+        """Take the user's subscription row FOR UPDATE.
+
+        Two payments of the same user finalised at once would otherwise
+        both read the same expiry and one duration would be lost.
+        """
+        result = await self._session.execute(
+            select(Subscription)
+            .where(Subscription.user_id == telegram_id)
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
     async def add(self, subscription: Subscription) -> Subscription:
         self._session.add(subscription)
         await self._session.flush()

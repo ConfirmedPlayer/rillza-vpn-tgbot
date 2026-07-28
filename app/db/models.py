@@ -199,6 +199,12 @@ class Payment(Base, TimestampMixin):
         DateTime(timezone=True)
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set in the SAME transaction that adds this payment's days to the
+    # subscription. It is the idempotency latch: dates alone cannot tell
+    # "already applied" from "applied by someone else".
+    days_applied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     provisioned_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )

@@ -1,6 +1,7 @@
 """Admin-facing texts and renderers."""
 
 from datetime import datetime
+from html import escape
 
 from app.bot.texts.ru import format_date, format_left
 from app.core.enums import PaymentStatus
@@ -101,8 +102,9 @@ def render_tariffs(tariffs) -> str:
 
 
 def render_user(user, subscription, payments, now: datetime) -> str:
-    name = user.first_name or '—'
-    username = f'@{user.username}' if user.username else '—'
+    # Attacker-controlled: escape before it reaches HTML parse mode.
+    name = escape(user.first_name or '—')
+    username = f'@{escape(user.username)}' if user.username else '—'
     lines = [
         f'👤 <b>{name}</b> · {username}',
         f'ID: <code>{user.id}</code>',
