@@ -104,8 +104,10 @@ openssl rand -hex 24
    `YOOMONEY_ACCESS_TOKEN`.
 
 Оба скоупа обязательны: `account-info` — узнать номер кошелька,
-`operation-history` — увидеть входящий платёж. Без второго бот никогда
-не подтвердит оплату.
+`operation-history` — увидеть входящий платёж. Токен только с первым
+выставляет счета безупречно и не подтверждает ни одного: деньги
+приходят, доступ не выдаётся. `check_payments` проверяет оба и говорит
+об этом прямо — в успешном выводе есть `operation-history readable`.
 
 `YOOMONEY_WALLET` можно оставить пустым — номер прочитается из API при
 старте.
@@ -167,7 +169,7 @@ docker compose exec bot python -m scripts.check_payments
 [  OK  ] group 'Celerity Primary Access' resolved
 [  OK  ] devices: group 'Celerity Primary Access' caps at 2 device(s)
 
-[  OK  ] yoomoney: wallet 4100…, balance 0.00 643
+[  OK  ] yoomoney: wallet 4100…, balance 0.00 643, operation-history readable
 [  OK  ] cryptobot: app Rillza via @CryptoBot
 ```
 

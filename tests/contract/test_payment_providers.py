@@ -185,13 +185,53 @@ class TestYooMoney:
                 'currency': '643',
             },
         )
+        mocked.post(HISTORY, payload={'operations': []})
 
         described = await yoomoney.describe_account()
 
         assert '4100111111111' in described
         assert '250.5' in described
-        # One call, and it is the read-only one.
-        assert requested_paths(mocked) == ['/api/account-info']
+        # Only the two read endpoints, no quickpay.
+        assert requested_paths(mocked) == [
+            '/api/account-info',
+            '/api/operation-history',
+        ]
+
+    async def test_describe_account_fails_without_the_history_scope(
+        self, yoomoney, mocked
+    ) -> None:
+        """The failure this check exists for.
+
+        A token granted account-info but not operation-history issues
+        invoices perfectly and confirms none of them: money arrives and
+        nobody gets access. account-info alone cannot see that.
+        """
+        mocked.post(
+            'https://yoomoney.ru/api/account-info',
+            payload={'account': '4100111111111'},
+        )
+        mocked.post(HISTORY, status=403, payload={'error': 'scope_error'})
+
+        with pytest.raises(PaymentError) as error:
+            await yoomoney.describe_account()
+
+        assert 'operation-history' in str(error.value)
+
+    async def test_scope_probe_cannot_match_a_real_payment(
+        self, yoomoney, mocked
+    ) -> None:
+        """The probe reads nobody's operations: its label is unusable."""
+        mocked.post(
+            'https://yoomoney.ru/api/account-info',
+            payload={'account': '4100111111111'},
+        )
+        mocked.post(HISTORY, payload={'operations': []})
+
+        await yoomoney.describe_account()
+
+        sent = last_request(mocked).kwargs['data']
+        assert sent['label'] == '00000000-0000-0000-0000-000000000000'
+        assert uuid.UUID(sent['label']).int == 0
 
     async def test_non_json_body_is_a_payment_error(
         self, yoomoney, mocked

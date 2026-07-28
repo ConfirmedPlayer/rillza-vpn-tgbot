@@ -32,6 +32,9 @@ QUICKPAY_URL = f'{API_HOST}/quickpay/confirm.xml'
 ACCOUNT_INFO_URL = f'{API_HOST}/api/account-info'
 OPERATION_HISTORY_URL = f'{API_HOST}/api/operation-history'
 TIMEOUT = aiohttp.ClientTimeout(total=20)
+#: A label no payment will ever carry, used to probe the history scope
+#: without reading anybody's operations.
+SCOPE_PROBE_LABEL = UUID('00000000-0000-0000-0000-000000000000')
 
 
 class YooMoneyProvider:
@@ -98,21 +101,39 @@ class YooMoneyProvider:
         return self._wallet
 
     async def describe_account(self) -> str:
-        """Wallet and balance — proves the token carries both scopes.
+        """Prove the token carries *both* scopes it needs.
 
-        ``account-info`` needs the scope of the same name; the balance it
-        returns is also the only read that tells a live token from one
-        that was revoked in the YooMoney cabinet.
+        ``account-info`` alone is not enough to call a deployment
+        healthy. The two scopes are granted separately, and a token with
+        only the first one issues invoices perfectly while
+        ``check_payment`` fails forever: money arrives and nobody gets
+        access. So the history is probed too, with a label that cannot
+        match anything — an empty answer proves the scope, and a missing
+        scope answers non-200, which ``_api`` turns into an error.
         """
         payload = await self._api(ACCOUNT_INFO_URL, {})
         if not isinstance(payload, dict) or not payload.get('account'):
             raise PaymentError('YooMoney account-info returned no account')
+
+        try:
+            await self._api(
+                OPERATION_HISTORY_URL,
+                {'label': str(SCOPE_PROBE_LABEL), 'type': 'deposition'},
+            )
+        except PaymentError as error:
+            raise PaymentError(
+                f'operation-history is not readable ({error}). The token '
+                'needs both account-info and operation-history — without '
+                'the second one payments can never be confirmed.'
+            ) from error
+
         balance = payload.get('balance')
         currency = payload.get('currency', '')
         wallet = str(payload['account'])
-        if balance is None:
-            return f'wallet {wallet}'
-        return f'wallet {wallet}, balance {balance} {currency}'.rstrip()
+        described = f'wallet {wallet}'
+        if balance is not None:
+            described += f', balance {balance} {currency}'.rstrip()
+        return f'{described}, operation-history readable'
 
     async def create_invoice(
         self,
