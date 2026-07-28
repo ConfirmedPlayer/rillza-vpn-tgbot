@@ -25,6 +25,7 @@ from app.integrations.celerity import (
 
 OK = '  OK  '
 FAIL = ' FAIL '
+SKIP = ' SKIP '
 
 #: Substrings of an aiohttp error that mean "the name never resolved",
 #: as opposed to "we reached the host and it said no".
@@ -100,7 +101,54 @@ async def main() -> int:
         except PanelError as error:
             report('groups', error)
 
+        try:
+            failures += await _check_device_limit(client)
+        except PanelError as error:
+            report('devices', error)
+
     return 1 if failures else 0
+
+
+async def _check_device_limit(client: CelerityClient) -> int:
+    """Report the cap the panel would enforce on a real account.
+
+    The group's own number is unreadable on its own — the list endpoint
+    answers with ids and names only — so this reads it off an existing
+    account, where the panel expands the group it belongs to. Which
+    means it says nothing until the first account exists.
+    """
+    users, total = await client.iter_users(page=1, limit=1)
+    if not users:
+        print(
+            f'[{SKIP}] devices: no accounts on the panel yet. The group '
+            'device limit\n'
+            '         is only visible through an account that belongs to '
+            'it, so run\n'
+            '         this again after the first trial or purchase.'
+        )
+        return 0
+
+    user = users[0]
+    limit = user.effective_device_limit
+    names = ', '.join(group.name for group in user.groups) or '—'
+    print(
+        f'[{OK}] devices: account {user.user_id} (of {total}) '
+        f'resolves to {_describe_limit(limit)}'
+    )
+    print(f'         own maxDevices={user.max_devices}, groups: {names}')
+    if limit <= 0:
+        print(
+            '         note: nothing is enforced at this value. Set '
+            'maxDevices on the\n'
+            '         group (panel -> Groups) if you meant to cap devices.'
+        )
+    return 0
+
+
+def _describe_limit(limit: int) -> str:
+    if limit > 0:
+        return f'{limit} device(s)'
+    return 'no device limit'
 
 
 if __name__ == '__main__':

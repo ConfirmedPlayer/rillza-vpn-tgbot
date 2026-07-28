@@ -351,6 +351,76 @@ class TestReads:
         assert total == 7
         await client.close()
 
+    async def test_device_limit_is_read_off_the_expanded_group(
+        self, client, mocked
+    ) -> None:
+        """The only way to see the cap the panel will enforce.
+
+        GET /api/groups answers with ids and names only, so the group's
+        maxDevices reaches us just once: expanded inside an account that
+        belongs to it.
+        """
+        mocked.get(
+            f'{BASE}/api/users?page=1&limit=1',
+            payload={
+                'users': [
+                    user_payload(
+                        maxDevices=0,
+                        groups=[
+                            {
+                                '_id': GROUP_ID,
+                                'name': 'Celerity Primary Access',
+                                'maxDevices': 2,
+                            }
+                        ],
+                    )
+                ],
+                'pagination': {'total': 1},
+            },
+        )
+
+        users, _ = await client.iter_users(page=1, limit=1)
+
+        assert users[0].effective_device_limit == 2
+        await client.close()
+
+    async def test_unexpanded_groups_are_not_a_parse_error(
+        self, client, mocked
+    ) -> None:
+        """Create and 409 answer with bare ObjectIds, not group objects.
+
+        Both shapes are normal, so neither may blow up provisioning.
+        """
+        mocked.get(
+            f'{BASE}/api/users/42',
+            payload=user_payload(groups=[GROUP_ID], maxDevices=0),
+        )
+
+        user = await client.get_user('42')
+
+        assert user is not None
+        assert user.groups == []
+        # Nothing said about groups, so nothing claimed about the cap.
+        assert user.effective_device_limit == 0
+        await client.close()
+
+    async def test_an_account_override_beats_the_group(
+        self, client, mocked
+    ) -> None:
+        mocked.get(
+            f'{BASE}/api/users/42',
+            payload=user_payload(
+                maxDevices=5,
+                groups=[{'_id': GROUP_ID, 'name': 'G', 'maxDevices': 2}],
+            ),
+        )
+
+        user = await client.get_user('42')
+
+        assert user is not None
+        assert user.effective_device_limit == 5
+        await client.close()
+
     async def test_subscription_info_reads_live_traffic(
         self, client, mocked
     ) -> None:
