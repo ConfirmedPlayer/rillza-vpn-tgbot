@@ -6,7 +6,10 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "aiogram>=3.15",
-    "aiohttp[speedups]>=3.11",
+    # Deliberately without [speedups]: that extra pulls in aiodns, which
+    # makes c-ares aiohttp's process-wide default resolver. See
+    # tests/test_dns_resolver.py.
+    "aiohttp>=3.11",
     "alembic>=1.14",
     "apscheduler>=3.11",
     "asyncpg>=0.30",
