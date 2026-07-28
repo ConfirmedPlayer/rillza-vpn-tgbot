@@ -218,11 +218,14 @@ class PaymentService:
     async def _apply_days(self, payment: Payment) -> Subscription:
         """Add this payment's days to the subscription, exactly once.
 
-        The latch lives on the payment row and is written in the same
-        transaction as the new expiry, so a retry can tell "my days are
-        already in there" from "someone else moved the date". Inferring
-        that from dates alone is what let a retried older payment shrink
-        a subscription, and let an admin grant swallow a payment.
+        The latch lives on the payment row and is claimed by a
+        conditional UPDATE in the same transaction as the new expiry, so
+        a retry can tell "my days are already in there" from "someone
+        else moved the date". Inferring that from dates alone is what
+        let a retried older payment shrink a subscription, and let an
+        admin grant swallow a payment. Inferring it from the latch as
+        *read* rather than as *claimed* was just as wrong: the read can
+        be a snapshot from before another worker won the race.
 
         The duration is added to the expiry as it stands *now*, never to
         a value captured earlier, so concurrent payments accumulate
@@ -233,12 +236,23 @@ class PaymentService:
             raise PaymentError(f'tariff {payment.tariff_id} vanished')
 
         now = utcnow()
-        # Serialise everything touching this user's subscription.
+        # Serialise every writer of this user's subscription, the first
+        # purchase included — see SubscriptionsRepository.lock_user.
+        await self._uow.subscriptions.lock_user(payment.user_id)
         subscription = await self._uow.subscriptions.lock_by_user(
             payment.user_id
         )
 
-        if payment.days_applied_at is not None:
+        # Claim the days before granting them, and believe the claim
+        # rather than the attribute. ``payment`` may have been loaded by
+        # a background sweep long before this call and latched by
+        # another worker since; only the conditional UPDATE knows.
+        # Reading payment.days_applied_at here instead is what let the
+        # provisioning watcher grant one payment's days twice.
+        if await self._uow.payments.mark_days_applied(payment.id, now) is None:
+            # Someone else's transaction owns these days. Commit to
+            # release the locks; nothing was changed.
+            await self._uow.commit()
             if subscription is None:  # pragma: no cover - inconsistent state
                 raise PaymentError(
                     f'payment {payment.id} applied without a subscription'
@@ -251,6 +265,8 @@ class PaymentService:
                 payment.user_id,
                 expires_at=now + duration,
                 origin=SubscriptionOrigin.PURCHASE,
+                # Must land in the same transaction as the latch below.
+                commit=False,
             )
         else:
             base = max(now, subscription.expires_at)
@@ -259,8 +275,9 @@ class PaymentService:
             # A renewal restarts the reminder cycle.
             subscription.notified_stage = None
 
-        await self._uow.payments.mark_days_applied(payment.id, now)
-        # One transaction: the days and the latch land together.
+        # One transaction: the days and the latch land together, so a
+        # crash between them cannot leave days granted with nothing to
+        # stop them being granted again.
         await self._uow.commit()
         return subscription
 

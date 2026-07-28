@@ -21,16 +21,36 @@ class SubscriptionsRepository:
         )
         return result.scalar_one_or_none()
 
+    async def lock_user(self, telegram_id: int) -> None:
+        """Serialise every writer of this user's subscription.
+
+        A row lock cannot lock a row that does not exist yet, so the
+        first purchase — the one case where there is nothing to lock —
+        ran unserialised: two payments arriving together both saw no
+        subscription and both inserted one. This is keyed by the
+        Telegram id instead of the row, and Postgres releases it when
+        the transaction ends.
+        """
+        await self._session.execute(
+            select(func.pg_advisory_xact_lock(telegram_id))
+        )
+
     async def lock_by_user(self, telegram_id: int) -> Subscription | None:
         """Take the user's subscription row FOR UPDATE.
 
         Two payments of the same user finalised at once would otherwise
         both read the same expiry and one duration would be lost.
+
+        ``populate_existing`` for the reason spelled out in
+        :meth:`PaymentsRepository.lock_for_finalize`: locking a row the
+        session already holds a copy of returns the stale copy, and this
+        expiry is about to be added to.
         """
         result = await self._session.execute(
             select(Subscription)
             .where(Subscription.user_id == telegram_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 

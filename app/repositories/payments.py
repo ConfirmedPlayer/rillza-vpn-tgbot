@@ -45,11 +45,20 @@ class PaymentsRepository:
 
         Returns None when another worker already holds it, so the caller
         can answer "проверяем…" instead of blocking behind an HTTP call.
+
+        ``populate_existing`` is not optional here. Without it a SELECT
+        that finds the object already in the identity map takes the row
+        lock and hands back the *pre-lock* attribute values — the session
+        does not commit (``expire_on_commit=False``), so a background
+        sweep that loaded this payment minutes ago would decide
+        idempotency from a snapshot taken before another worker latched
+        it, and grant the days a second time.
         """
         result = await self._session.execute(
             select(Payment)
             .where(Payment.id == payment_id)
             .with_for_update(skip_locked=True)
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 

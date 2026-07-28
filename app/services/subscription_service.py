@@ -60,8 +60,17 @@ class SubscriptionService:
         telegram_id: int,
         expires_at: datetime,
         origin: SubscriptionOrigin,
+        commit: bool = True,
     ) -> Subscription:
-        """Record the subscription before touching the panel."""
+        """Record the subscription before touching the panel.
+
+        ``commit=False`` leaves the row flushed but uncommitted, for a
+        caller that must land it together with something else. Payment
+        provisioning needs that: committing the days here and the
+        idempotency latch afterwards made them two transactions, and a
+        crash in the gap left days granted with nothing to stop them
+        being granted again.
+        """
         subscription = Subscription(
             id=uuid.uuid4(),
             user_id=telegram_id,
@@ -71,7 +80,8 @@ class SubscriptionService:
             panel_user_id=str(telegram_id),
         )
         await self._uow.subscriptions.add(subscription)
-        await self._uow.commit()
+        if commit:
+            await self._uow.commit()
         return subscription
 
     async def provision(

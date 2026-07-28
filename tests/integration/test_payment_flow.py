@@ -1,12 +1,18 @@
 """Payment finalisation: races, retries and idempotency."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
 
-from app.core.enums import PaymentStatus, SubscriptionStatus
+from app.core.enums import (
+    PaymentStatus,
+    SubscriptionOrigin,
+    SubscriptionStatus,
+)
 from app.core.settings import Settings
+from app.db.models import Payment
 from app.integrations.payments import PaymentRegistry
 from app.services.payment_service import FinalizeOutcome, PaymentService
 from app.services.subscription_service import SubscriptionService
@@ -410,3 +416,96 @@ class TestProvisioningIsMonotonic:
             await payments.check_and_finalize(payment.id)
 
         assert subscription.expires_at == once
+
+
+class TestStaleWorkerCannotDoubleApply:
+    """The provisioning watcher loads its queue once, then spends a panel
+    round trip per payment. Whatever happens meanwhile — a "проверить
+    оплату" tap, another worker — lands in the database while the watcher
+    still holds objects loaded before it.
+
+    Deciding idempotency from those objects granted one payment's days
+    twice. These pin both halves of the fix.
+    """
+
+    async def _paid_payment(self, session_factory, tariff) -> object:
+        async with UnitOfWork(session_factory) as setup:
+            await setup.users.upsert(USER_ID)
+            payment = Payment(
+                id=uuid.uuid4(),
+                user_id=USER_ID,
+                tariff_id=tariff.id,
+                provider='yoomoney',
+                status=PaymentStatus.PAID,
+                amount_kopeks=tariff.price_kopeks,
+                invoice_expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            )
+            await setup.payments.add(payment)
+            await setup.commit()
+            return payment.id
+
+    async def test_locking_a_payment_refreshes_the_copy_it_returns(
+        self, session_factory, tariff
+    ) -> None:
+        """SELECT ... FOR UPDATE on a row the session already holds a
+        copy of takes the lock and, without populate_existing, hands back
+        the pre-lock attributes. The lock then guards nothing the caller
+        can see."""
+        payment_id = await self._paid_payment(session_factory, tariff)
+        latched_at = datetime.now(UTC)
+
+        async with UnitOfWork(session_factory) as worker:
+            snapshot = await worker.payments.get(payment_id)
+            assert snapshot is not None
+            assert snapshot.days_applied_at is None
+
+            async with UnitOfWork(session_factory) as other:
+                assert (
+                    await other.payments.mark_days_applied(
+                        payment_id, latched_at
+                    )
+                    is not None
+                )
+                await other.commit()
+
+            locked = await worker.payments.lock_for_finalize(payment_id)
+
+        assert locked is not None
+        assert locked.days_applied_at is not None
+
+    async def test_days_claimed_elsewhere_are_not_granted_again(
+        self, session_factory, panel, registry, app_settings, tariff
+    ) -> None:
+        """Even handed a payment whose in-memory copy says "not applied",
+        provisioning must not add the duration a second time: the
+        conditional UPDATE is the authority, not the attribute."""
+        payment_id = await self._paid_payment(session_factory, tariff)
+        start = datetime.now(UTC) + timedelta(days=10)
+        async with UnitOfWork(session_factory) as setup:
+            await SubscriptionService(
+                setup, panel, app_settings
+            ).create_pending(
+                USER_ID, expires_at=start, origin=SubscriptionOrigin.TRIAL
+            )
+
+        async with UnitOfWork(session_factory) as worker:
+            snapshot = await worker.payments.get(payment_id)
+            assert snapshot is not None and snapshot.days_applied_at is None
+
+            # Another session finishes the same payment end to end.
+            async with UnitOfWork(session_factory) as other:
+                await build_service(
+                    other, panel, registry, app_settings
+                ).check_and_finalize(payment_id)
+
+            # The watcher now works through its stale queue entry.
+            await build_service(
+                worker, panel, registry, app_settings
+            )._provision(snapshot)
+
+        async with UnitOfWork(session_factory) as check:
+            subscription = await check.subscriptions.get_by_user(USER_ID)
+            assert subscription is not None
+            assert subscription.expires_at == start + timedelta(
+                days=tariff.duration_days
+            )
