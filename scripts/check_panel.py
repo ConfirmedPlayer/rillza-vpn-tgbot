@@ -27,6 +27,10 @@ OK = '  OK  '
 FAIL = ' FAIL '
 SKIP = ' SKIP '
 
+#: Accounts pulled to read group limits off. One page is plenty: every
+#: account in a group carries the same expanded group object.
+SAMPLE_LIMIT = 50
+
 #: Substrings of an aiohttp error that mean "the name never resolved",
 #: as opposed to "we reached the host and it said no".
 DNS_MARKERS = ('DNS', 'getaddrinfo', 'Name or service not known')
@@ -102,22 +106,26 @@ async def main() -> int:
             report('groups', error)
 
         try:
-            failures += await _check_device_limit(client)
+            failures += await _check_device_limit(
+                client, settings.panel_group_name
+            )
         except PanelError as error:
             report('devices', error)
 
     return 1 if failures else 0
 
 
-async def _check_device_limit(client: CelerityClient) -> int:
-    """Report the cap the panel would enforce on a real account.
+async def _check_device_limit(client: CelerityClient, group_name: str) -> int:
+    """Report the group's configured cap, and who escapes it.
 
-    The group's own number is unreadable on its own — the list endpoint
-    answers with ids and names only — so this reads it off an existing
-    account, where the panel expands the group it belongs to. Which
-    means it says nothing until the first account exists.
+    The group's number is unreadable on its own — the list endpoint
+    answers with ids and names only — so it is read off accounts, where
+    the panel expands the group they belong to. Reporting one account's
+    *resolved* limit is not enough: an account carrying its own
+    ``maxDevices`` never consults the group, so a single sample can say
+    "no limit" while the group is set correctly. Hence both numbers.
     """
-    users, total = await client.iter_users(page=1, limit=1)
+    users, total = await client.iter_users(page=1, limit=SAMPLE_LIMIT)
     if not users:
         print(
             f'[{SKIP}] devices: no accounts on the panel yet. The group '
@@ -128,19 +136,49 @@ async def _check_device_limit(client: CelerityClient) -> int:
         )
         return 0
 
-    user = users[0]
-    limit = user.effective_device_limit
-    names = ', '.join(group.name for group in user.groups) or '—'
-    print(
-        f'[{OK}] devices: account {user.user_id} (of {total}) '
-        f'resolves to {_describe_limit(limit)}'
-    )
-    print(f'         own maxDevices={user.max_devices}, groups: {names}')
-    if limit <= 0:
+    limits = {
+        group.name: group.max_devices
+        for user in users
+        for group in user.groups
+    }
+    configured = limits.get(group_name)
+    if configured is None:
         print(
-            '         note: nothing is enforced at this value. Set '
-            'maxDevices on the\n'
-            '         group (panel -> Groups) if you meant to cap devices.'
+            f'[{SKIP}] devices: none of the {len(users)} sampled account(s) '
+            f'belong to\n'
+            f'         {group_name!r}, so its device limit is not '
+            'readable yet.'
+        )
+        return 0
+
+    print(
+        f'[{OK}] devices: group {group_name!r} caps at '
+        f'{_describe_limit(configured)}'
+    )
+
+    overriding = [user for user in users if user.max_devices != 0]
+    print(
+        f'         {len(users)} of {total} account(s) sampled, '
+        f'{len(overriding)} with their own maxDevices'
+    )
+    if overriding:
+        shown = ', '.join(
+            f'{user.user_id}({user.max_devices})' for user in overriding[:10]
+        )
+        print(f'         overriding: {shown}')
+        print(
+            '         an override wins over the group. Accounts the bot '
+            'creates carry\n'
+            '         maxDevices=0, so they inherit the group; set an '
+            'existing one to 0\n'
+            '         to pull it back under the group limit.'
+        )
+    if configured <= 0:
+        print(
+            '         note: the group enforces nothing at this value. Set '
+            'maxDevices\n'
+            '         on the group (panel -> Groups) if you meant to cap '
+            'devices.'
         )
     return 0
 

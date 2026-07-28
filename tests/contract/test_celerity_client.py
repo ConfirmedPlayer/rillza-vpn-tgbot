@@ -404,6 +404,37 @@ class TestReads:
         assert user.effective_device_limit == 0
         await client.close()
 
+    async def test_an_override_hides_the_group_limit_but_not_its_value(
+        self, client, mocked
+    ) -> None:
+        """A hand-made account can say -1 and never consult its group.
+
+        Reading only the resolved number then reports "no limit" while
+        the group is capped correctly — which is exactly how a working
+        setup got misread once. The group's own value stays legible.
+        """
+        mocked.get(
+            f'{BASE}/api/users/42',
+            payload=user_payload(
+                userId='Sasha',
+                maxDevices=-1,
+                groups=[
+                    {
+                        '_id': GROUP_ID,
+                        'name': 'Celerity Primary Access',
+                        'maxDevices': 2,
+                    }
+                ],
+            ),
+        )
+
+        user = await client.get_user('42')
+
+        assert user is not None
+        assert user.effective_device_limit == -1
+        assert [g.max_devices for g in user.groups] == [2]
+        await client.close()
+
     async def test_an_account_override_beats_the_group(
         self, client, mocked
     ) -> None:
