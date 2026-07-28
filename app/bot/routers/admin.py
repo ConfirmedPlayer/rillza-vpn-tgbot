@@ -294,12 +294,15 @@ async def handle_broadcast_start(
 
 
 async def handle_broadcast_draft(
-    message: Message, state: FSMContext, uow: UnitOfWork, **_
+    message: Message,
+    state: FSMContext,
+    uow: UnitOfWork,
+    broadcasts: BroadcastService,
+    **_,
 ) -> None:
     reachable = await uow.users.count_reachable()
-    await state.update_data(
-        chat_id=message.chat.id, message_id=message.message_id
-    )
+    draft = await broadcasts.create(message.chat.id, message.message_id)
+    await state.update_data(broadcast_id=draft.id)
     await message.answer(
         texts.BROADCAST_CONFIRM.format(count=reachable),
         reply_markup=keyboards.admin_broadcast_confirm(),
@@ -315,12 +318,17 @@ async def handle_broadcast_send(
 ) -> None:
     data = await state.get_data()
     await state.clear()
-    chat_id, message_id = data.get('chat_id'), data.get('message_id')
-    if chat_id is None or message_id is None:
+    broadcast_id = data.get('broadcast_id')
+    if broadcast_id is None:
         await query.answer(texts.BROADCAST_LOST, show_alert=True)
         return
 
-    broadcast = await broadcasts.create(int(chat_id), int(message_id))
+    # Claiming is the guard against a double tap: only one wins.
+    broadcast = await broadcasts.claim(int(broadcast_id))
+    if broadcast is None:
+        await query.answer(texts.BROADCAST_ALREADY_RUNNING, show_alert=True)
+        return
+
     await _edit(query, texts.BROADCAST_RUNNING, keyboards.admin_back())
     await query.answer()
 

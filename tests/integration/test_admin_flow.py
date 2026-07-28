@@ -408,3 +408,109 @@ class TestExpiryReminders:
             assert user is not None
             assert user.is_bot_blocked is True
         assert report.blocked == 1
+
+
+class TestBroadcastRobustness:
+    """Regressions from the pre-launch review."""
+
+    async def test_double_tap_starts_one_broadcast(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        from aiogram.methods import CopyMessage
+
+        async with UnitOfWork(session_factory) as uow:
+            for telegram_id in (1, 2, 3):
+                await uow.users.upsert(telegram_id)
+            await uow.commit()
+
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.ADMIN_BROADCAST)
+        )
+        await dispatcher.feed_update(bot, message_update('всем привет'))
+        session.requests.clear()
+
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.ADMIN_BROADCAST_GO)
+        )
+        first_pass = len(
+            [r for r in session.requests if isinstance(r, CopyMessage)]
+        )
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.ADMIN_BROADCAST_GO)
+        )
+
+        copies = [r for r in session.requests if isinstance(r, CopyMessage)]
+        # The second tap sends nothing more: nobody is messaged twice.
+        assert len(copies) == first_pass
+
+    async def test_claiming_a_draft_twice_wins_once(
+        self, session_factory
+    ) -> None:
+        """The guard for two taps racing with the same draft in hand."""
+        from app.services.broadcast_service import BroadcastService
+
+        session = RecordingSession()
+        bot = Bot(token=FAKE_TOKEN, session=session)
+        async with UnitOfWork(session_factory) as uow:
+            service = BroadcastService(uow, bot)
+            draft = await service.create(ADMIN_ID, 500)
+
+            first = await service.claim(draft.id)
+            second = await service.claim(draft.id)
+
+        assert first is not None
+        assert second is None
+
+    async def test_interrupted_broadcast_is_resumed(
+        self, session_factory
+    ) -> None:
+        """A restart mid-run must not abandon the rest of the audience."""
+        from datetime import timedelta
+
+        from aiogram.methods import CopyMessage
+
+        from app.core.enums import BroadcastStatus
+        from app.services.broadcast_service import BroadcastService
+
+        session = RecordingSession()
+        bot = Bot(token=FAKE_TOKEN, session=session)
+        async with UnitOfWork(session_factory) as uow:
+            for telegram_id in (1, 2, 3):
+                await uow.users.upsert(telegram_id)
+            await uow.commit()
+
+            service = BroadcastService(uow, bot)
+            broadcast = await service.create(ADMIN_ID, 500)
+            # Left behind by a restart: running, stalled after user 1.
+            broadcast.status = BroadcastStatus.RUNNING
+            broadcast.last_user_id = 1
+            broadcast.updated_at = datetime.now(UTC) - timedelta(hours=1)
+            await uow.commit()
+
+            reports = await service.resume_stale()
+
+            assert len(reports) == 1
+            assert broadcast.status == BroadcastStatus.DONE
+
+        copies = [r for r in session.requests if isinstance(r, CopyMessage)]
+        # Only the audience past the cursor, and each exactly once.
+        assert [c.chat_id for c in copies] == [2, 3]
+
+    async def test_a_live_broadcast_is_not_stolen_by_the_resumer(
+        self, session_factory
+    ) -> None:
+        from app.core.enums import BroadcastStatus
+        from app.services.broadcast_service import BroadcastService
+
+        session = RecordingSession()
+        bot = Bot(token=FAKE_TOKEN, session=session)
+        async with UnitOfWork(session_factory) as uow:
+            await uow.users.upsert(1)
+            await uow.commit()
+            service = BroadcastService(uow, bot)
+            broadcast = await service.create(ADMIN_ID, 500)
+            broadcast.status = BroadcastStatus.RUNNING
+            await uow.commit()
+
+            # Freshly touched: someone is working on it right now.
+            assert await service.resume_stale() == []

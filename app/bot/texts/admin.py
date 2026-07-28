@@ -28,6 +28,7 @@ BROADCAST_DONE = (
     'Доставлено: {sent}\nЗаблокировали бота: {blocked}\nОшибок: {failed}'
 )
 BROADCAST_LOST = 'Черновик потерян, начните заново.'
+BROADCAST_ALREADY_RUNNING = 'Эта рассылка уже отправляется.'
 
 
 def rubles(kopeks: int) -> str:

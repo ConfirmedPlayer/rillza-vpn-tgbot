@@ -32,6 +32,10 @@ def render_subscription(view, now) -> str:
 
     if subscription.status == SubscriptionStatus.REVOKED:
         return ru.SUBSCRIPTION_REVOKED
+    if subscription.status == SubscriptionStatus.PENDING:
+        # Recorded but not yet delivered: saying "истекла" here would be
+        # a lie, and the date shown would be in the future.
+        return ru.SUBSCRIPTION_PENDING
     if not subscription.is_active_at(now):
         return ru.SUBSCRIPTION_EXPIRED.format(until=until)
 

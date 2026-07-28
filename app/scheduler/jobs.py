@@ -17,6 +17,7 @@ from app.core.settings import Settings
 from app.db.models import JobHeartbeat
 from app.integrations.celerity import CelerityClient
 from app.integrations.payments import PaymentRegistry
+from app.services.broadcast_service import BroadcastService
 from app.services.notification_service import NotificationService
 from app.services.payment_service import PaymentService
 from app.services.reconcile_service import ReconcileService
@@ -30,6 +31,7 @@ EXPIRY_SYNC = 'expiry_sync'
 LATE_PAYMENT_SWEEP = 'late_payment_sweep'
 EXPIRY_NOTIFIER = 'expiry_notifier'
 RECONCILER = 'reconciler'
+BROADCAST_RESUMER = 'broadcast_resumer'
 
 
 class JobRunner:
@@ -116,6 +118,12 @@ class JobRunner:
             ).send_expiry_reminders(),
         )
 
+    async def resume_broadcasts(self) -> None:
+        await self.run(
+            BROADCAST_RESUMER,
+            lambda uow: BroadcastService(uow, self._bot).resume_stale(),
+        )
+
     async def reconcile(self) -> None:
         def action(uow: UnitOfWork):
             subscriptions = SubscriptionService(
@@ -170,6 +178,14 @@ def register_jobs(scheduler: AsyncIOScheduler, runner: JobRunner) -> None:
         'interval',
         hours=1,
         id=EXPIRY_NOTIFIER,
+        **common,
+    )
+    scheduler.add_job(
+        runner.resume_broadcasts,
+        'interval',
+        minutes=5,
+        id=BROADCAST_RESUMER,
+        next_run_time=utcnow() + timedelta(minutes=1),
         **common,
     )
     scheduler.add_job(

@@ -344,3 +344,30 @@ class TestCallbacksAlwaysAnswer:
             isinstance(request, AnswerCallbackQuery)
             for request in session.requests
         )
+
+
+async def test_pending_subscription_does_not_read_as_expired(
+    app_settings, session_factory, panel
+) -> None:
+    """Regression: a subscription awaiting the panel showed «истекла»
+    next to a future date."""
+    from app.bot.routers.menu import render_subscription
+    from app.core.enums import SubscriptionOrigin
+
+    panel.offline = True
+    async with UnitOfWork(session_factory) as uow:
+        await uow.users.upsert(USER_ID)
+        await uow.commit()
+        subscriptions = SubscriptionService(uow, panel, app_settings)
+        await subscriptions.create_pending(
+            USER_ID,
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+            origin=SubscriptionOrigin.PURCHASE,
+        )
+
+        view = await subscriptions.describe(USER_ID)
+        assert view is not None
+        text = render_subscription(view, datetime.now(UTC))
+
+    assert 'Выдаём доступ' in text
+    assert 'закончился' not in text

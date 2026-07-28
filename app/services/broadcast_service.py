@@ -8,6 +8,7 @@ restart continues where it stopped instead of spamming everyone again.
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
@@ -19,6 +20,8 @@ from app.services.uow import UnitOfWork
 
 #: Users per page, and how often progress is written down.
 PAGE_SIZE = 25
+#: A running broadcast untouched for this long was interrupted.
+STALE_AFTER = timedelta(minutes=5)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +47,31 @@ class BroadcastService:
         await self._uow.broadcasts.add(broadcast)
         await self._uow.commit()
         return broadcast
+
+    async def claim(self, broadcast_id: int) -> Broadcast | None:
+        """Take a draft for sending; a duplicate tap gets None."""
+        claimed = await self._uow.broadcasts.claim(broadcast_id)
+        await self._uow.commit()
+        return claimed
+
+    async def resume_stale(
+        self, older_than: timedelta = STALE_AFTER
+    ) -> list[BroadcastReport]:
+        """Finish broadcasts a restart interrupted.
+
+        Without this the audience past the cursor never hears anything
+        and the row sits in "running" forever.
+        """
+        cutoff = datetime.now(UTC) - older_than
+        reports = []
+        for broadcast in await self._uow.broadcasts.stale_running(cutoff):
+            logger.warning(
+                'Resuming broadcast {} from user {}',
+                broadcast.id,
+                broadcast.last_user_id,
+            )
+            reports.append(await self.run(broadcast))
+        return reports
 
     async def run(
         self,
