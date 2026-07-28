@@ -410,6 +410,18 @@ class TestExpiryReminders:
         assert report.blocked == 1
 
 
+def _confirm_callback(session: RecordingSession) -> str:
+    """The callback data of the newest «Отправить всем» button."""
+    for request in reversed(session.requests):
+        markup = getattr(request, 'reply_markup', None)
+        for row in getattr(markup, 'inline_keyboard', []) or []:
+            for button in row:
+                data = button.callback_data or ''
+                if data.startswith(keyboards.ADMIN_BROADCAST_GO_PREFIX):
+                    return data
+    raise AssertionError('no broadcast confirm button was sent')
+
+
 class TestBroadcastRobustness:
     """Regressions from the pre-launch review."""
 
@@ -427,17 +439,14 @@ class TestBroadcastRobustness:
             bot, callback_update(keyboards.ADMIN_BROADCAST)
         )
         await dispatcher.feed_update(bot, message_update('всем привет'))
+        go = _confirm_callback(session)
         session.requests.clear()
 
-        await dispatcher.feed_update(
-            bot, callback_update(keyboards.ADMIN_BROADCAST_GO)
-        )
+        await dispatcher.feed_update(bot, callback_update(go))
         first_pass = len(
             [r for r in session.requests if isinstance(r, CopyMessage)]
         )
-        await dispatcher.feed_update(
-            bot, callback_update(keyboards.ADMIN_BROADCAST_GO)
-        )
+        await dispatcher.feed_update(bot, callback_update(go))
 
         copies = [r for r in session.requests if isinstance(r, CopyMessage)]
         # The second tap sends nothing more: nobody is messaged twice.

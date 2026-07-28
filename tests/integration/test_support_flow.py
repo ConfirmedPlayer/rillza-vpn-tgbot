@@ -12,7 +12,7 @@ from aiogram.methods import (
     ForwardMessage,
     SendMessage,
 )
-from aiogram.types import Chat, Message, Update
+from aiogram.types import CallbackQuery, Chat, Message, Update
 from aiogram.types import User as TelegramUser
 
 from app.bot import keyboards
@@ -104,6 +104,44 @@ def admin_reply(text: str, reply_to_message_id: int) -> Update:
                 date=datetime.now(UTC),
                 chat=chat,
                 text='карточка обращения',
+            ),
+        ),
+    )
+
+
+DRAFT_MESSAGE_ID = 777
+
+
+def admin_message(text: str, message_id: int = DRAFT_MESSAGE_ID) -> Update:
+    return Update(
+        update_id=3,
+        message=Message(
+            message_id=message_id,
+            date=datetime.now(UTC),
+            chat=Chat(id=ADMIN_ID, type='private'),
+            from_user=TelegramUser(
+                id=ADMIN_ID, is_bot=False, first_name='Админ'
+            ),
+            text=text,
+        ),
+    )
+
+
+def admin_callback(data: str) -> Update:
+    return Update(
+        update_id=4,
+        callback_query=CallbackQuery(
+            id='cb-admin',
+            from_user=TelegramUser(
+                id=ADMIN_ID, is_bot=False, first_name='Админ'
+            ),
+            chat_instance='ci',
+            data=data,
+            message=Message(
+                message_id=888,
+                date=datetime.now(UTC),
+                chat=Chat(id=ADMIN_ID, type='private'),
+                text='карточка',
             ),
         ),
     )
@@ -411,3 +449,66 @@ async def test_display_names_cannot_inject_html(
     card = texts_to(session, ADMIN_ID)[0]
     assert '<a href' not in card
     assert '&lt;b&gt;' in card
+
+
+class TestBroadcastDoesNotSwallowSupportReplies:
+    """The admin drafts a broadcast, then a support card arrives and the
+    admin answers it. Both used to break: the reply became a new draft
+    instead of reaching the user, and it silently replaced what the
+    already-visible confirm button would send.
+    """
+
+    async def _draft_a_broadcast(self, dispatcher, bot, session) -> str:
+        """Draft one, and return its confirm button's callback data."""
+        await dispatcher.feed_update(
+            bot, admin_callback(keyboards.ADMIN_BROADCAST)
+        )
+        await dispatcher.feed_update(bot, admin_message('всем привет'))
+        for request in reversed(session.requests):
+            markup = getattr(request, 'reply_markup', None)
+            for row in getattr(markup, 'inline_keyboard', []) or []:
+                for button in row:
+                    data = button.callback_data or ''
+                    if data.startswith(keyboards.ADMIN_BROADCAST_GO_PREFIX):
+                        return data
+        raise AssertionError('no confirm button was offered')
+
+    async def test_a_reply_after_drafting_reaches_the_user(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        await self._draft_a_broadcast(dispatcher, bot, session)
+
+        await open_support(dispatcher, bot)
+        await dispatcher.feed_update(bot, user_message('не подключается'))
+        card, _copy = await card_ids(session_factory, CUSTOMER_ID)
+        session.requests.clear()
+
+        await dispatcher.feed_update(bot, admin_reply('перезайдите', card))
+
+        # The answer was copied to the user, not swallowed as a draft.
+        assert [c.chat_id for c in copies(session)] == [CUSTOMER_ID]
+
+    async def test_confirming_sends_the_draft_that_card_promised(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        async with UnitOfWork(session_factory) as uow:
+            for telegram_id in (1, 2, 3):
+                await uow.users.upsert(telegram_id)
+            await uow.commit()
+
+        go = await self._draft_a_broadcast(dispatcher, bot, session)
+
+        # A private answer to somebody, typed after the draft.
+        await open_support(dispatcher, bot)
+        await dispatcher.feed_update(bot, user_message('не подключается'))
+        card, _copy = await card_ids(session_factory, CUSTOMER_ID)
+        await dispatcher.feed_update(bot, admin_reply('секретный ответ', card))
+        session.requests.clear()
+
+        await dispatcher.feed_update(bot, admin_callback(go))
+
+        # Whatever went out, it is the draft, and the private answer was
+        # not copied to anyone but the person who asked.
+        broadcast = [c for c in copies(session)]
+        assert all(c.from_chat_id == ADMIN_ID for c in broadcast)
+        assert {c.message_id for c in broadcast} == {DRAFT_MESSAGE_ID}

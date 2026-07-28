@@ -302,29 +302,31 @@ async def handle_broadcast_draft(
 ) -> None:
     reachable = await uow.users.count_reachable()
     draft = await broadcasts.create(message.chat.id, message.message_id)
-    await state.update_data(broadcast_id=draft.id)
+    # The draft is captured; leave the flow immediately. Staying in it
+    # made every later admin message a new draft — including a reply to
+    # a support card, which was then swallowed instead of delivered, and
+    # which any still-visible confirm button would have broadcast.
+    await state.clear()
     await message.answer(
         texts.BROADCAST_CONFIRM.format(count=reachable),
-        reply_markup=keyboards.admin_broadcast_confirm(),
+        reply_markup=keyboards.admin_broadcast_confirm(draft.id),
     )
 
 
 async def handle_broadcast_send(
-    query: CallbackQuery,
-    state: FSMContext,
-    uow: UnitOfWork,
-    broadcasts: BroadcastService,
-    **_,
+    query: CallbackQuery, uow: UnitOfWork, broadcasts: BroadcastService, **_
 ) -> None:
-    data = await state.get_data()
-    await state.clear()
-    broadcast_id = data.get('broadcast_id')
-    if broadcast_id is None:
+    raw = (query.data or '').removeprefix(keyboards.ADMIN_BROADCAST_GO_PREFIX)
+    try:
+        # The id comes from the card that was tapped, so an old card
+        # sends its own draft and nothing else.
+        broadcast_id = int(raw)
+    except ValueError:
         await query.answer(texts.BROADCAST_LOST, show_alert=True)
         return
 
     # Claiming is the guard against a double tap: only one wins.
-    broadcast = await broadcasts.claim(int(broadcast_id))
+    broadcast = await broadcasts.claim(broadcast_id)
     if broadcast is None:
         await query.answer(texts.BROADCAST_ALREADY_RUNNING, show_alert=True)
         return
@@ -372,7 +374,8 @@ def build_router(settings: Settings) -> Router:
         handle_broadcast_start, F.data == keyboards.ADMIN_BROADCAST
     )
     router.callback_query.register(
-        handle_broadcast_send, F.data == keyboards.ADMIN_BROADCAST_GO
+        handle_broadcast_send,
+        F.data.startswith(keyboards.ADMIN_BROADCAST_GO_PREFIX),
     )
     router.callback_query.register(
         handle_user_card, F.data.startswith(keyboards.ADMIN_USER_PREFIX)

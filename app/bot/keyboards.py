@@ -34,7 +34,10 @@ ADMIN_MENU = 'admin'
 ADMIN_STATS = 'admin:stats'
 ADMIN_TARIFFS = 'admin:tariffs'
 ADMIN_BROADCAST = 'admin:broadcast'
-ADMIN_BROADCAST_GO = 'admin:broadcast:go'
+#: The draft id rides in the callback data. Keeping it in FSM state
+#: instead meant a confirm button sent whatever draft was newest —
+#: a card and the message it promises to send must be one thing.
+ADMIN_BROADCAST_GO_PREFIX = 'admin:broadcast:go:'
 ADMIN_FIND_USER = 'admin:find'
 ADMIN_USER_PREFIX = 'admin:user:'
 ADMIN_GRANT_PREFIX = 'admin:grant:'
@@ -219,9 +222,12 @@ def admin_user(
     return builder.as_markup()
 
 
-def admin_broadcast_confirm() -> InlineKeyboardMarkup:
+def admin_broadcast_confirm(broadcast_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text='📣 Отправить всем', callback_data=ADMIN_BROADCAST_GO)
+    builder.button(
+        text='📣 Отправить всем',
+        callback_data=f'{ADMIN_BROADCAST_GO_PREFIX}{broadcast_id}',
+    )
     builder.button(text='↩️ Отмена', callback_data=ADMIN_MENU)
     builder.adjust(1)
     return builder.as_markup()
