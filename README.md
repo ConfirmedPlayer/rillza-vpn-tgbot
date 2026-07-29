@@ -4,6 +4,7 @@
 панель [CELERITY](https://github.com/ClickDevTech/CELERITY-panel) —
 исполнитель, клиентское приложение — [Happ](https://happ.su).
 
+Состояние работы для следующей сессии: [handoff.json](handoff.json).
 План разработки и все принятые решения: [PLAN.md](PLAN.md).
 Настройка окружения: [docs/SETUP.md](docs/SETUP.md).
 Незакрытые находки ревью: [docs/REVIEW.md](docs/REVIEW.md).
