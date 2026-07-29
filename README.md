@@ -5,6 +5,8 @@
 исполнитель, клиентское приложение — [Happ](https://happ.su).
 
 План разработки и все принятые решения: [PLAN.md](PLAN.md).
+Настройка окружения: [docs/SETUP.md](docs/SETUP.md).
+Незакрытые находки ревью: [docs/REVIEW.md](docs/REVIEW.md).
 
 ## Стек
 
@@ -123,7 +125,7 @@ app/
 ├── scheduler/      фоновые задачи
 └── main.py         сборка и запуск
 alembic/            миграции
-docs/               SETUP.md — откуда брать переменные окружения
+docs/               SETUP.md (окружение), REVIEW.md (незакрытые находки)
 scripts/            проверки панели и платёжных ключей
 tests/              unit + contract + integration (нужен Postgres)
 ```
