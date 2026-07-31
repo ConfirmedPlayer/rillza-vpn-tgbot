@@ -15,13 +15,18 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from loguru import logger
 
 from app.core.enums import BroadcastStatus
+from app.core.jobs import BROADCAST_RESUMER, JOB_INTERVALS
 from app.db.models import Broadcast
 from app.services.uow import UnitOfWork
 
 #: Users per page, and how often progress is written down.
 PAGE_SIZE = 25
 #: A running broadcast untouched for this long was interrupted.
-STALE_AFTER = timedelta(minutes=5)
+#: A run is only "abandoned" once it has been silent for several of the
+#: resumer's own intervals. Equal to the interval, a live-but-slow page
+#: (one long TelegramRetryAfter is enough) gets picked up while its
+#: sender is still going, and both write the same counters.
+STALE_AFTER = JOB_INTERVALS[BROADCAST_RESUMER] * 3
 
 
 @dataclass(frozen=True, slots=True)

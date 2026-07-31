@@ -35,6 +35,11 @@ from app.integrations.payments import PaymentError, PaymentRegistry
 from app.services.subscription_service import SubscriptionService, utcnow
 from app.services.uow import UnitOfWork
 
+#: How far back the daily late-payment sweep looks. Wide on purpose:
+#: consecutive runs must overlap, so a missed run or an unreachable
+#: provider costs a retry rather than the money.
+SWEEP_LOOKBACK = timedelta(days=7)
+
 
 class FinalizeOutcome(Enum):
     #: Paid and access delivered.
@@ -343,15 +348,21 @@ class PaymentService:
         return expired
 
     async def sweep_late_payments(self) -> list[Payment]:
-        """Re-check yesterday's expired invoices once.
+        """Re-check recently expired invoices for money that arrived late.
 
         Money does arrive after a 30-minute TTL. Without this it would
         sit unnoticed: the payment is closed, the user has no access, and
         nothing ever looks again.
+
+        The window is deliberately much wider than the daily interval.
+        A day-wide window on a daily job leaves no overlap at all: one
+        restart, one misfire, or one provider outage, and an invoice
+        falls between two runs and is never looked at again — and this
+        is the last thing in the system that would have found it.
         """
         now = utcnow()
         candidates = await self._uow.payments.list_recently_expired(
-            now - timedelta(days=1), now
+            now - SWEEP_LOOKBACK, now
         )
         late: list[Payment] = []
         for payment in candidates:
@@ -362,7 +373,14 @@ class PaymentService:
                 check = await provider.check_payment(
                     payment.id, payment.provider_invoice_id
                 )
-            except PaymentError:
+            except PaymentError as error:
+                # Not fatal — the wide window means the next run tries
+                # again — but silence here once hid money for good.
+                logger.warning(
+                    'Late-payment check for {} failed, retrying next run: {}',
+                    payment.id,
+                    error,
+                )
                 continue
             if not check.is_paid:
                 continue

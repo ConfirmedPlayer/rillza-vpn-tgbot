@@ -1,5 +1,7 @@
 """Per-user rate limiting for anything a stranger can trigger."""
 
+from datetime import timedelta
+from time import monotonic
 from typing import Protocol
 
 from redis.asyncio import Redis
@@ -31,3 +33,28 @@ class AllowAllRateLimiter:
 
     async def allow(self, key: str, limit: int, window: int) -> bool:
         return True
+
+
+class Cooldown:
+    """One gate for an action that is expensive for the whole fleet.
+
+    Deliberately in-process rather than in Redis: compose runs a single
+    bot, the guarded action is an admin button, and a cooldown that
+    forgets on restart is the safe way to be wrong.
+    """
+
+    def __init__(self, period: timedelta) -> None:
+        self._period = period.total_seconds()
+        self._last: float | None = None
+
+    def claim(self) -> bool:
+        """True when the caller may go ahead; starts the cooldown."""
+        now = monotonic()
+        if self._last is not None and now - self._last < self._period:
+            return False
+        self._last = now
+        return True
+
+    def release(self) -> None:
+        """Give the turn back when the guarded action did not happen."""
+        self._last = None

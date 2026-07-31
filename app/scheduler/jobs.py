@@ -15,6 +15,17 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bot.texts import ru
+from app.core.jobs import (
+    BROADCAST_RESUMER,
+    EXPIRY_NOTIFIER,
+    EXPIRY_SYNC,
+    INVOICE_EXPIRER,
+    JOB_INTERVALS,
+    LATE_PAYMENT_SWEEP,
+    PAYMENT_POLLER,
+    PROVISIONING_WATCHER,
+    RECONCILER,
+)
 from app.core.settings import Settings
 from app.db.models import JobHeartbeat
 from app.integrations.celerity import CelerityClient
@@ -26,14 +37,19 @@ from app.services.reconcile_service import ReconcileService
 from app.services.subscription_service import SubscriptionService, utcnow
 from app.services.uow import UnitOfWork
 
-PAYMENT_POLLER = 'payment_poller'
-PROVISIONING_WATCHER = 'provisioning_watcher'
-INVOICE_EXPIRER = 'invoice_expirer'
-EXPIRY_SYNC = 'expiry_sync'
-LATE_PAYMENT_SWEEP = 'late_payment_sweep'
-EXPIRY_NOTIFIER = 'expiry_notifier'
-RECONCILER = 'reconciler'
-BROADCAST_RESUMER = 'broadcast_resumer'
+#: Re-exported so callers keep importing job names from the scheduler.
+__all__ = [
+    'BROADCAST_RESUMER',
+    'EXPIRY_NOTIFIER',
+    'EXPIRY_SYNC',
+    'INVOICE_EXPIRER',
+    'LATE_PAYMENT_SWEEP',
+    'PAYMENT_POLLER',
+    'PROVISIONING_WATCHER',
+    'RECONCILER',
+    'JobRunner',
+    'register_jobs',
+]
 
 
 class JobRunner:
@@ -180,58 +196,34 @@ class JobRunner:
 
 def register_jobs(scheduler: AsyncIOScheduler, runner: JobRunner) -> None:
     common = {'max_instances': 1, 'coalesce': True, 'misfire_grace_time': 60}
-    scheduler.add_job(
-        runner.poll_payments,
-        'interval',
-        seconds=30,
-        id=PAYMENT_POLLER,
-        **common,
-    )
-    scheduler.add_job(
-        runner.finish_provisioning,
-        'interval',
-        seconds=60,
-        id=PROVISIONING_WATCHER,
-        **common,
-    )
-    scheduler.add_job(
-        runner.expire_invoices,
-        'interval',
-        minutes=5,
-        id=INVOICE_EXPIRER,
-        **common,
-    )
-    scheduler.add_job(
-        runner.sync_expired, 'interval', minutes=10, id=EXPIRY_SYNC, **common
-    )
-    scheduler.add_job(
-        runner.send_expiry_reminders,
-        'interval',
-        hours=1,
-        id=EXPIRY_NOTIFIER,
-        **common,
-    )
-    scheduler.add_job(
-        runner.resume_broadcasts,
-        'interval',
-        minutes=5,
-        id=BROADCAST_RESUMER,
-        next_run_time=utcnow() + timedelta(minutes=1),
-        **common,
-    )
-    scheduler.add_job(
-        runner.reconcile,
-        'interval',
-        hours=4,
-        id=RECONCILER,
-        next_run_time=utcnow() + timedelta(minutes=2),
-        **common,
-    )
-    scheduler.add_job(
-        runner.sweep_late_payments,
-        'interval',
-        hours=24,
-        id=LATE_PAYMENT_SWEEP,
-        next_run_time=utcnow() + timedelta(minutes=5),
-        **common,
-    )
+    #: Delay before the first run, for jobs that would otherwise all
+    #: fire at once on a cold start.
+    first_run = {
+        BROADCAST_RESUMER: timedelta(minutes=1),
+        RECONCILER: timedelta(minutes=2),
+        LATE_PAYMENT_SWEEP: timedelta(minutes=5),
+    }
+    actions = {
+        PAYMENT_POLLER: runner.poll_payments,
+        PROVISIONING_WATCHER: runner.finish_provisioning,
+        INVOICE_EXPIRER: runner.expire_invoices,
+        EXPIRY_SYNC: runner.sync_expired,
+        EXPIRY_NOTIFIER: runner.send_expiry_reminders,
+        BROADCAST_RESUMER: runner.resume_broadcasts,
+        RECONCILER: runner.reconcile,
+        LATE_PAYMENT_SWEEP: runner.sweep_late_payments,
+    }
+    for name, action in actions.items():
+        # The interval comes from core.jobs, which the admin screen also
+        # reads to decide whether a job has gone quiet for too long.
+        extra = {}
+        if name in first_run:
+            extra['next_run_time'] = utcnow() + first_run[name]
+        scheduler.add_job(
+            action,
+            'interval',
+            seconds=JOB_INTERVALS[name].total_seconds(),
+            id=name,
+            **extra,
+            **common,
+        )

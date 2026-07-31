@@ -18,10 +18,14 @@ from app.core.enums import PaymentStatus
 from app.core.settings import Settings
 from app.integrations.celerity import CelerityClient, PanelError
 from app.services.broadcast_service import BroadcastService
-from app.services.payment_service import PaymentService
+from app.services.payment_service import FinalizeOutcome, PaymentService
+from app.services.rate_limit import Cooldown
 from app.services.subscription_service import SubscriptionService, utcnow
 from app.services.support_service import SupportService
 from app.services.uow import UnitOfWork
+
+#: How far back the user card and the retry button both look.
+RECENT_PAYMENTS = 20
 
 
 async def handle_admin(message: Message, **_: object) -> None:
@@ -87,7 +91,11 @@ async def _show_user(
         text, markup = texts.USER_NOT_FOUND, keyboards.admin_back()
     else:
         subscription = await subscriptions.get(telegram_id)
-        payments = await uow.payments.list_by_user(telegram_id, limit=5)
+        # Same window the retry button acts on, so the button cannot be
+        # missing for a payment the retry would in fact have picked up.
+        payments = await uow.payments.list_by_user(
+            telegram_id, limit=RECENT_PAYMENTS
+        )
         stuck = any(p.status == PaymentStatus.PAID for p in payments)
         text = texts.render_user(user, subscription, payments, utcnow())
         markup = keyboards.admin_user(telegram_id, stuck)
@@ -195,11 +203,18 @@ async def handle_revoke(
 
 
 async def handle_resync(
-    query: CallbackQuery, panel: CelerityClient, **_
+    query: CallbackQuery, panel: CelerityClient, sync_cooldown: Cooldown, **_
 ) -> None:
+    if not sync_cooldown.claim():
+        # POST /api/sync re-pushes every config to every node, and the
+        # button can be held down. The panel client's own docstring
+        # asks for this gate.
+        await query.answer(texts.RESYNC_TOO_SOON, show_alert=True)
+        return
     try:
         await panel.sync()
     except PanelError:
+        sync_cooldown.release()
         await query.answer(texts.PANEL_UNAVAILABLE, show_alert=True)
         return
     await query.answer(texts.RESYNC_STARTED, show_alert=True)
@@ -217,13 +232,22 @@ async def handle_retry_provisioning(
     )
     stuck = [
         payment
-        for payment in await uow.payments.list_by_user(telegram_id, limit=20)
+        for payment in await uow.payments.list_by_user(
+            telegram_id, limit=RECENT_PAYMENTS
+        )
         if payment.status == PaymentStatus.PAID
     ]
+    delivered = 0
     for payment in stuck:
-        await payments.check_and_finalize(payment.id)
+        result = await payments.check_and_finalize(payment.id)
+        if result.outcome is FinalizeOutcome.PROVISIONED:
+            delivered += 1
 
-    await query.answer(texts.RETRY_DONE.format(count=len(stuck)))
+    # Attempts are not outcomes: with the panel down this used to say
+    # "обработано 3" while nothing at all had been handed over.
+    await query.answer(
+        texts.RETRY_DONE.format(count=delivered, total=len(stuck))
+    )
     await _show_user(query, telegram_id, uow, subscriptions, edit=True)
 
 

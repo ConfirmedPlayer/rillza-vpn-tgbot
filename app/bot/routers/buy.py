@@ -16,6 +16,7 @@ from app.services.payment_service import (
     FinalizeResult,
     PaymentService,
 )
+from app.services.subscription_service import SubscriptionService
 from app.services.uow import UnitOfWork
 
 
@@ -112,7 +113,10 @@ def _result_text(result: FinalizeResult) -> str:
 
 
 async def handle_check(
-    query: CallbackQuery, payments: PaymentService, **_: object
+    query: CallbackQuery,
+    payments: PaymentService,
+    subscriptions: SubscriptionService,
+    **_: object,
 ) -> None:
     raw = (query.data or '').removeprefix(keyboards.CHECK_PREFIX)
     try:
@@ -131,10 +135,17 @@ async def handle_check(
         await query.answer(ru.PAYMENT_CHECKING)
         return
 
-    if result.outcome in (
-        FinalizeOutcome.PROVISIONED,
-        FinalizeOutcome.PAID_PENDING_PROVISIONING,
-    ):
+    if result.outcome is FinalizeOutcome.PROVISIONED:
+        # Hand over what they just bought. The trial screen already
+        # does this; a purchase used to end on «Главное меню» and leave
+        # the buyer to go looking for their own subscription.
+        view = await subscriptions.describe(query.from_user.id)
+        markup = keyboards.subscription(view.url if view else None)
+        await _edit(query, _result_text(result), markup)
+        await query.answer()
+        return
+
+    if result.outcome is FinalizeOutcome.PAID_PENDING_PROVISIONING:
         await _edit(query, _result_text(result), keyboards.back_to_menu())
         await query.answer()
         return

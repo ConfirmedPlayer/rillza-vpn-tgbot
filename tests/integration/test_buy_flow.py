@@ -207,3 +207,31 @@ async def test_a_payment_cannot_be_finalized_by_another_user(
         assert stored.status == PaymentStatus.PENDING
         assert await uow.subscriptions.get_by_user(stranger) is None
         assert await uow.subscriptions.get_by_user(USER_ID) is None
+
+
+async def test_a_paid_screen_offers_the_subscription_link(
+    dispatcher, bot, session, session_factory, seeded_tariffs, provider
+) -> None:
+    """The trial hands over the link; a purchase used to hand over
+    nothing but «Главное меню», so the person who just paid had to go
+    hunting for what they bought."""
+    from tests.integration.test_trial_flow import button_texts, callback_update
+
+    await dispatcher.feed_update(
+        bot,
+        callback_update(
+            f'{keyboards.PROVIDER_PREFIX}{seeded_tariffs[0].id}:yoomoney'
+        ),
+    )
+    async with UnitOfWork(session_factory) as uow:
+        payment = (await uow.payments.list_by_user(USER_ID))[0]
+    provider.mark_paid(payment.id)
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.CHECK_PREFIX}{payment.id}')
+    )
+
+    buttons = button_texts(session)
+    assert any('Открыть подписку' in text for text in buttons)
+    assert any('Как подключить' in text for text in buttons)

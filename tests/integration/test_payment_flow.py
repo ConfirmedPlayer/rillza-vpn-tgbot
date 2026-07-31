@@ -295,6 +295,54 @@ class TestExpiryAndLateMoney:
         assert stored is not None
         assert stored.status == PaymentStatus.EXPIRED
 
+    async def test_money_older_than_a_day_is_still_found(
+        self, payments, tariff, provider, uow
+    ) -> None:
+        """The sweep runs daily, so a day-wide window leaves gaps.
+
+        One restart, one misfire, one run that took a minute too long,
+        and an invoice falls out of the window between two runs — with
+        nothing else in the system that ever looks at it again.
+        """
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        payment.invoice_expires_at = datetime.now(UTC) - timedelta(days=3)
+        await uow.commit()
+        await payments.expire_stale()
+        provider.mark_paid(payment.id)
+
+        late = await payments.sweep_late_payments()
+
+        assert [p.id for p in late] == [payment.id]
+        stored = await uow.payments.get(payment.id)
+        assert stored is not None
+        assert stored.status == PaymentStatus.PROVISIONED
+
+    async def test_a_provider_outage_does_not_lose_the_payment(
+        self, payments, tariff, provider, uow
+    ) -> None:
+        """A skipped check must survive until the next daily run.
+
+        The provider being down is exactly when the invoice is closest
+        to ageing out: the sweep only comes back in twenty-four hours,
+        by which point a day-wide window no longer covers it.
+        """
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        payment.invoice_expires_at = datetime.now(UTC) - timedelta(hours=2)
+        await uow.commit()
+        await payments.expire_stale()
+        provider.mark_paid(payment.id)
+        provider.offline = True
+
+        assert await payments.sweep_late_payments() == []
+
+        # A day later, the next run.
+        provider.offline = False
+        payment.invoice_expires_at = datetime.now(UTC) - timedelta(hours=26)
+        await uow.commit()
+        late = await payments.sweep_late_payments()
+
+        assert [p.id for p in late] == [payment.id]
+
 
 class TestPoller:
     async def test_poller_finalises_paid_invoices_only(

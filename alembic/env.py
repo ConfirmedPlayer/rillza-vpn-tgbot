@@ -33,6 +33,9 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={'paramstyle': 'named'},
         compare_type=True,
+        # Off by default, which means a changed server_default in a model
+        # would pass `alembic check` and quietly diverge from the table.
+        compare_server_default=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -43,6 +46,7 @@ def do_run_migrations(connection: Connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
+        compare_server_default=True,
     )
     with context.begin_transaction():
         context.run_migrations()

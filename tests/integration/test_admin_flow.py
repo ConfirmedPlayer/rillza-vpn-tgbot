@@ -268,6 +268,22 @@ class TestUserCard:
         assert 'sync' in panel.calls
         assert any('инхронизация' in alert for alert in alerts(session))
 
+    async def test_resync_is_refused_while_the_last_one_is_warm(
+        self, dispatcher, bot, session, panel
+    ) -> None:
+        """A full config push to the whole fleet, on a button anyone can
+        hold down. The client's own docstring asks for a cooldown."""
+        for _ in range(3):
+            await dispatcher.feed_update(
+                bot,
+                callback_update(
+                    f'{keyboards.ADMIN_RESYNC_PREFIX}{CUSTOMER_ID}'
+                ),
+            )
+
+        assert panel.calls.count('sync') == 1
+        assert any('одождите' in alert for alert in alerts(session))
+
 
 class TestBroadcast:
     async def test_broadcast_copies_to_every_reachable_user(

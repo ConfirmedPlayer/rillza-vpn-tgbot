@@ -5,6 +5,7 @@ Handlers ask for what they need by parameter name (``subscriptions``,
 """
 
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any
 
 from aiogram import BaseMiddleware
@@ -15,11 +16,14 @@ from app.integrations.celerity import CelerityClient
 from app.integrations.payments import PaymentRegistry
 from app.services.broadcast_service import BroadcastService
 from app.services.payment_service import PaymentService
-from app.services.rate_limit import AllowAllRateLimiter, RateLimiter
+from app.services.rate_limit import AllowAllRateLimiter, Cooldown, RateLimiter
 from app.services.subscription_service import SubscriptionService
 from app.services.support_service import SupportService
 from app.services.trial_service import TrialService
 from app.services.uow import UnitOfWork
+
+#: A fleet-wide config re-push; the panel client asks for a cooldown.
+SYNC_COOLDOWN = timedelta(minutes=2)
 
 
 class ServicesMiddleware(BaseMiddleware):
@@ -34,6 +38,8 @@ class ServicesMiddleware(BaseMiddleware):
         self._panel = panel
         self._providers = providers
         self._limiter = limiter or AllowAllRateLimiter()
+        # One per process: a full fleet re-push is not a per-user action.
+        self._sync_cooldown = Cooldown(SYNC_COOLDOWN)
 
     async def __call__(
         self,
@@ -60,4 +66,5 @@ class ServicesMiddleware(BaseMiddleware):
         data['settings'] = self._settings
         data['panel'] = self._panel
         data['providers'] = self._providers
+        data['sync_cooldown'] = self._sync_cooldown
         return await handler(event, data)

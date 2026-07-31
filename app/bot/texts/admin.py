@@ -5,6 +5,7 @@ from html import escape
 
 from app.bot.texts.ru import format_date, format_left
 from app.core.enums import PaymentStatus
+from app.core.jobs import stale_after
 
 MENU = '🛠 <b>Админка Rillza VPN</b>\n\nВыберите раздел.'
 FIND_USER = '👤 Отправьте Telegram ID или @username пользователя.'
@@ -12,10 +13,14 @@ USER_NOT_FOUND = 'Пользователь не найден.'
 PANEL_UNAVAILABLE = 'Панель не отвечает. Попробуйте ещё раз.'
 GRANTED = 'Добавлено {days} дней.'
 REVOKED = 'Доступ отозван.'
+RESYNC_TOO_SOON = (
+    'Синхронизация только что запускалась. Подождите минуту — '
+    'это полный пуш конфигов на все ноды.'
+)
 RESYNC_STARTED = (
     'Синхронизация запущена. Подключение появится в течение минуты.'
 )
-RETRY_DONE = 'Обработано зависших платежей: {count}.'
+RETRY_DONE = 'Выдано: {count} из {total} зависших платежей.'
 
 BROADCAST_PROMPT = (
     '📣 Отправьте сообщение для рассылки — текст, фото или что угодно.\n\n'
@@ -79,8 +84,11 @@ def render_stats(stats, panel_stats, now: datetime) -> str:
         if beat.last_success_at is None:
             lines.append(f'{beat.job_name}: ❌ ни одного успеха')
             continue
-        ago = int((now - beat.last_success_at).total_seconds() // 60)
-        mark = '✅' if ago < 60 else '⚠️'
+        quiet = now - beat.last_success_at
+        ago = int(quiet.total_seconds() // 60)
+        # Judged against the job's own interval: a daily sweep is not
+        # late at lunchtime, and a 30-second poller is.
+        mark = '✅' if quiet < stale_after(beat.job_name) else '⚠️'
         line = f'{mark} {beat.job_name}: {ago} мин назад'
         if beat.last_error_at is not None:
             line += ' (были ошибки)'
