@@ -310,23 +310,27 @@ class PaymentService:
 
     # --- background sweeps --------------------------------------------
 
-    async def poll_pending(self) -> int:
-        """Advance every live invoice. Returns how many were finalised."""
-        finalised = 0
+    async def poll_pending(self) -> list[FinalizeResult]:
+        """Advance every live invoice.
+
+        Returns the payments this run delivered, so the caller can tell
+        the people who paid and never came back to look.
+        """
+        delivered: list[FinalizeResult] = []
         for payment in await self._uow.payments.list_pending(utcnow()):
             result = await self.check_and_finalize(payment.id)
             if result.outcome is FinalizeOutcome.PROVISIONED:
-                finalised += 1
-        return finalised
+                delivered.append(result)
+        return delivered
 
-    async def finish_provisioning(self) -> int:
+    async def finish_provisioning(self) -> list[FinalizeResult]:
         """Retry payments stuck at "money taken, access not delivered"."""
-        finished = 0
+        delivered: list[FinalizeResult] = []
         for payment in await self._uow.payments.list_awaiting_provisioning():
             result = await self.check_and_finalize(payment.id)
             if result.outcome is FinalizeOutcome.PROVISIONED:
-                finished += 1
-        return finished
+                delivered.append(result)
+        return delivered
 
     async def expire_stale(self) -> list[Payment]:
         """Close invoices whose time ran out, without touching paid money."""

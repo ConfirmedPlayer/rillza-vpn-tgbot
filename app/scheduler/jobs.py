@@ -9,17 +9,19 @@ from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.bot.texts import ru
 from app.core.settings import Settings
 from app.db.models import JobHeartbeat
 from app.integrations.celerity import CelerityClient
 from app.integrations.payments import PaymentRegistry
 from app.services.broadcast_service import BroadcastService
 from app.services.notification_service import NotificationService
-from app.services.payment_service import PaymentService
+from app.services.payment_service import FinalizeResult, PaymentService
 from app.services.reconcile_service import ReconcileService
 from app.services.subscription_service import SubscriptionService, utcnow
 from app.services.uow import UnitOfWork
@@ -88,16 +90,45 @@ class JobRunner:
                 await uow.rollback()
             await self._heartbeat(uow, name, error)
 
+    async def _announce_delivery(
+        self, uow: UnitOfWork, delivered: list[FinalizeResult]
+    ) -> None:
+        """Tell people whose access a job delivered on their behalf.
+
+        The "я оплатил" button answers in the handler, but nobody answers
+        for a payment the poller or the watcher finished — the user is
+        left staring at an invoice while their subscription is live.
+        """
+        for result in delivered:
+            if result.payment is None or result.expires_at is None:
+                continue
+            telegram_id = result.payment.user_id
+            text = ru.PAYMENT_SUCCESS.format(
+                until=ru.format_date(result.expires_at)
+            )
+            try:
+                await self._bot.send_message(telegram_id, text)
+            except TelegramForbiddenError:
+                await uow.users.set_bot_blocked(telegram_id, True)
+                await uow.commit()
+            except Exception as error:  # telling must not fail the job
+                logger.warning(
+                    'Could not announce payment to {}: {}', telegram_id, error
+                )
+
     async def poll_payments(self) -> None:
-        await self.run(
-            PAYMENT_POLLER, lambda uow: self._payments(uow).poll_pending()
-        )
+        await self.run(PAYMENT_POLLER, self._poll_pending)
+
+    async def _poll_pending(self, uow: UnitOfWork) -> None:
+        delivered = await self._payments(uow).poll_pending()
+        await self._announce_delivery(uow, delivered)
 
     async def finish_provisioning(self) -> None:
-        await self.run(
-            PROVISIONING_WATCHER,
-            lambda uow: self._payments(uow).finish_provisioning(),
-        )
+        await self.run(PROVISIONING_WATCHER, self._finish_provisioning)
+
+    async def _finish_provisioning(self, uow: UnitOfWork) -> None:
+        delivered = await self._payments(uow).finish_provisioning()
+        await self._announce_delivery(uow, delivered)
 
     async def expire_invoices(self) -> None:
         await self.run(

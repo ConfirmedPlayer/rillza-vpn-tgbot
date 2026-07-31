@@ -187,7 +187,7 @@ class TestFinalize:
         panel.offline = False
         finished = await payments.finish_provisioning()
 
-        assert finished == 1
+        assert len(finished) == 1
         # Same days delivered: no extra month for the delay, and none
         # taken away either.
         assert subscription.expires_at == granted
@@ -307,7 +307,7 @@ class TestPoller:
 
         finalised = await payments.poll_pending()
 
-        assert finalised == 1
+        assert len(finalised) == 1
         stored = await uow.payments.get(paid.id)
         assert stored is not None
         assert stored.status == PaymentStatus.PROVISIONED

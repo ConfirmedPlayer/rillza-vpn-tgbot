@@ -12,6 +12,7 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.methods import CopyMessage, SendMessage, TelegramMethod
 from aiogram.types import Chat, Message, MessageId, User
 
@@ -25,11 +26,17 @@ class RecordingSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.requests: list[TelegramMethod[Any]] = []
+        #: Answer every call the way Telegram answers a blocked bot.
+        self.forbidden = False
 
     async def make_request(
         self, bot: Bot, method: TelegramMethod[Any], timeout: int | None = None
     ) -> Any:
         self.requests.append(method)
+        if self.forbidden:
+            raise TelegramForbiddenError(
+                method=method, message='bot was blocked by the user'
+            )
         if isinstance(method, CopyMessage):
             # copy_message answers with the new message's id only.
             return MessageId(message_id=len(self.requests))

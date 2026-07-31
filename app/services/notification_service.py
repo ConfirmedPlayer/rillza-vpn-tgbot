@@ -15,7 +15,7 @@ from loguru import logger
 
 from app.bot import keyboards
 from app.bot.texts import ru
-from app.core.enums import NotifiedStage
+from app.core.enums import NotifiedStage, SubscriptionOrigin
 from app.services.subscription_service import utcnow
 from app.services.uow import UnitOfWork
 
@@ -49,6 +49,19 @@ class NotificationService:
             )
             for subscription in due:
                 if subscription.notified_stage == stage:
+                    continue
+                term = subscription.expires_at - subscription.created_at
+                if (
+                    subscription.origin == SubscriptionOrigin.TRIAL
+                    # Whole days only: created_at is the transaction
+                    # clock, so the term is never exactly N days.
+                    and term.days <= days
+                ):
+                    # A trial shorter than the horizon lands inside this
+                    # window the hour it is granted: "продлите, чтобы не
+                    # остаться без VPN" an hour after a gift reads as a
+                    # scam. The nearer stage still fires, which is the
+                    # nudge that converts. A longer trial keeps both.
                     continue
                 # Claim the notice before sending: a crash mid-send costs
                 # one reminder, a double send costs trust.
