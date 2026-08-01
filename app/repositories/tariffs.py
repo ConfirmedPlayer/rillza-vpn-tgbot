@@ -1,11 +1,21 @@
-"""Tariff queries."""
+"""Tariff queries.
+
+Writes RETURN the updated row, like the other repositories: reading an
+ORM object back after a plain UPDATE is unreliable in async code.
+"""
 
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import Update, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Tariff
+
+
+def _returning(statement: Update) -> Update:
+    return statement.returning(Tariff).execution_options(
+        synchronize_session=False, populate_existing=True
+    )
 
 
 class TariffsRepository:
@@ -38,3 +48,28 @@ class TariffsRepository:
             .order_by(Tariff.sort_order, Tariff.duration_days)
         )
         return result.scalars().all()
+
+    async def set_price(
+        self, tariff_id: int, price_kopeks: int
+    ) -> Tariff | None:
+        """Kopeks only: money never becomes a float on the way in."""
+        result = await self._session.execute(
+            _returning(
+                update(Tariff)
+                .where(Tariff.id == tariff_id)
+                .values(price_kopeks=price_kopeks)
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def set_active(self, tariff_id: int, active: bool) -> Tariff | None:
+        """Show or hide a tariff. Archiving stays a separate concern:
+        payments reference tariffs, so rows are never deleted."""
+        result = await self._session.execute(
+            _returning(
+                update(Tariff)
+                .where(Tariff.id == tariff_id)
+                .values(is_active=active)
+            )
+        )
+        return result.scalar_one_or_none()

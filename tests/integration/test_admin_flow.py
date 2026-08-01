@@ -539,3 +539,96 @@ class TestBroadcastRobustness:
 
             # Freshly touched: someone is working on it right now.
             assert await service.resume_stale() == []
+
+
+class TestTariffEditing:
+    """PLAN.md §2: "цены и активность редактируются из админки без
+    деплоя". The screen was read-only, so a price change meant SQL on
+    the production database — the one place the plan says to avoid.
+    """
+
+    async def test_the_tariff_list_offers_a_button_per_tariff(
+        self, dispatcher, bot, session, seeded_tariffs
+    ) -> None:
+        from tests.integration.test_trial_flow import button_texts
+
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.ADMIN_TARIFFS)
+        )
+
+        buttons = button_texts(session)
+        for tariff in seeded_tariffs:
+            assert any(tariff.title_ru in text for text in buttons)
+
+    async def test_a_new_price_reaches_the_database_and_the_shop(
+        self, dispatcher, bot, session, session_factory, seeded_tariffs
+    ) -> None:
+        tariff = seeded_tariffs[0]
+
+        await dispatcher.feed_update(
+            bot, callback_update(f'{keyboards.ADMIN_TARIFF_PREFIX}{tariff.id}')
+        )
+        await dispatcher.feed_update(
+            bot,
+            callback_update(
+                f'{keyboards.ADMIN_TARIFF_PRICE_PREFIX}{tariff.id}'
+            ),
+        )
+        await dispatcher.feed_update(bot, message_update('249'))
+
+        async with UnitOfWork(session_factory) as uow:
+            stored = await uow.tariffs.get(tariff.id)
+            assert stored is not None
+            # Rubles in, kopeks stored: money stays integer.
+            assert stored.price_kopeks == 24_900
+
+        session.requests.clear()
+        await dispatcher.feed_update(bot, callback_update(keyboards.BUY))
+        from tests.integration.test_trial_flow import button_texts
+
+        assert any('249' in text for text in button_texts(session))
+
+    async def test_a_price_that_is_not_a_number_is_refused(
+        self, dispatcher, bot, session, session_factory, seeded_tariffs
+    ) -> None:
+        tariff = seeded_tariffs[0]
+        before = tariff.price_kopeks
+
+        await dispatcher.feed_update(
+            bot,
+            callback_update(
+                f'{keyboards.ADMIN_TARIFF_PRICE_PREFIX}{tariff.id}'
+            ),
+        )
+        await dispatcher.feed_update(bot, message_update('дёшево'))
+
+        async with UnitOfWork(session_factory) as uow:
+            stored = await uow.tariffs.get(tariff.id)
+            assert stored is not None
+            assert stored.price_kopeks == before
+        assert any('число' in text for text in sent_texts(session))
+
+    async def test_a_disabled_tariff_leaves_the_shop(
+        self, dispatcher, bot, session, session_factory, seeded_tariffs
+    ) -> None:
+        from tests.integration.test_trial_flow import button_texts
+
+        tariff = seeded_tariffs[0]
+
+        await dispatcher.feed_update(
+            bot,
+            callback_update(
+                f'{keyboards.ADMIN_TARIFF_TOGGLE_PREFIX}{tariff.id}'
+            ),
+        )
+
+        async with UnitOfWork(session_factory) as uow:
+            stored = await uow.tariffs.get(tariff.id)
+            assert stored is not None
+            assert stored.is_active is False
+
+        session.requests.clear()
+        await dispatcher.feed_update(bot, callback_update(keyboards.BUY))
+        assert not any(
+            tariff.title_ru in text for text in button_texts(session)
+        )

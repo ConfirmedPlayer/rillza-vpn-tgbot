@@ -33,6 +33,9 @@ SUPPORT_UNBLOCK_PREFIX = 'support:unblock:'
 ADMIN_MENU = 'admin'
 ADMIN_STATS = 'admin:stats'
 ADMIN_TARIFFS = 'admin:tariffs'
+ADMIN_TARIFF_PREFIX = 'admin:tariff:'
+ADMIN_TARIFF_PRICE_PREFIX = 'admin:tprice:'
+ADMIN_TARIFF_TOGGLE_PREFIX = 'admin:ttoggle:'
 ADMIN_BROADCAST = 'admin:broadcast'
 #: The draft id rides in the callback data. Keeping it in FSM state
 #: instead meant a confirm button sent whatever draft was newest —
@@ -258,5 +261,42 @@ def support_blocked(telegram_id: int) -> InlineKeyboardMarkup:
     builder.button(
         text='♻️ Разблокировать',
         callback_data=f'{SUPPORT_UNBLOCK_PREFIX}{telegram_id}',
+    )
+    return builder.as_markup()
+
+
+def admin_tariffs(items) -> InlineKeyboardMarkup:
+    """One button per tariff: prices are edited here, not in psql."""
+    builder = InlineKeyboardBuilder()
+    for tariff in items:
+        state = '✅' if tariff.is_active else '⏸'
+        label = f'{state} {tariff.title_ru} — {tariff.price_kopeks // 100} ₽'
+        builder.row(
+            InlineKeyboardButton(
+                text=label, callback_data=f'{ADMIN_TARIFF_PREFIX}{tariff.id}'
+            )
+        )
+    builder.row(InlineKeyboardButton(text='↩️ Назад', callback_data=ADMIN_MENU))
+    return builder.as_markup()
+
+
+def admin_tariff(tariff) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text='💰 Изменить цену',
+            callback_data=f'{ADMIN_TARIFF_PRICE_PREFIX}{tariff.id}',
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text='⏸ Убрать из продажи'
+            if tariff.is_active
+            else '✅ Вернуть в продажу',
+            callback_data=f'{ADMIN_TARIFF_TOGGLE_PREFIX}{tariff.id}',
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text='↩️ К тарифам', callback_data=ADMIN_TARIFFS)
     )
     return builder.as_markup()

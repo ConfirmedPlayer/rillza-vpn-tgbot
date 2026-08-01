@@ -21,6 +21,15 @@ RESYNC_STARTED = (
     'Синхронизация запущена. Подключение появится в течение минуты.'
 )
 RETRY_DONE = 'Выдано: {count} из {total} зависших платежей.'
+TARIFF_ASK_PRICE = (
+    '💰 Отправьте новую цену в рублях, целым числом.\n\n'
+    'Сейчас: <b>{current}</b>. Изменится только для новых покупок — '
+    'уже оплаченные подписки не трогаются.'
+)
+TARIFF_BAD_PRICE = 'Нужно целое число рублей больше нуля. Попробуйте ещё раз.'
+TARIFF_SAVED = 'Цена обновлена.'
+TARIFF_ENABLED = 'Тариф вернулся в продажу.'
+TARIFF_DISABLED = 'Тариф убран из продажи.'
 
 BROADCAST_PROMPT = (
     '📣 Отправьте сообщение для рассылки — текст, фото или что угодно.\n\n'
@@ -106,8 +115,23 @@ def render_tariffs(tariffs) -> str:
             f'{rubles(tariff.price_kopeks)} за {tariff.duration_days} дн. '
             f'({rubles(tariff.monthly_price_kopeks)}/мес)'
         )
-    lines += ['', 'Цены меняются прямо в базе — деплой не нужен.']
+    lines += ['', 'Выберите тариф, чтобы изменить цену или снять с продажи.']
     return '\n'.join(lines)
+
+
+def render_tariff(tariff) -> str:
+    state = 'в продаже' if tariff.is_active else 'снят с продажи'
+    return '\n'.join(
+        [
+            f'🧾 <b>{escape(tariff.title_ru)}</b> '
+            f'(<code>{escape(tariff.code)}</code>)',
+            '',
+            f'Цена: <b>{rubles(tariff.price_kopeks)}</b> '
+            f'за {tariff.duration_days} дн.',
+            f'В месяц: {rubles(tariff.monthly_price_kopeks)}',
+            f'Статус: {state}',
+        ]
+    )
 
 
 def render_user(user, subscription, payments, now: datetime) -> str:

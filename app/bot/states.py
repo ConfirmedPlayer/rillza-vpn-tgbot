@@ -11,5 +11,9 @@ class AdminBroadcast(StatesGroup):
     waiting_for_message = State()
 
 
+class AdminTariffPrice(StatesGroup):
+    waiting_for_price = State()
+
+
 class Support(StatesGroup):
     writing = State()

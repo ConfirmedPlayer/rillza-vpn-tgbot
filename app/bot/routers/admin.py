@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery, Message
 from app.bot import keyboards
 from app.bot.filters import IsAdmin
 from app.bot.routers.menu import _edit
-from app.bot.states import AdminBroadcast, AdminFindUser
+from app.bot.states import AdminBroadcast, AdminFindUser, AdminTariffPrice
 from app.bot.texts import admin as texts
 from app.bot.texts import support as support_texts
 from app.core.enums import PaymentStatus
@@ -65,10 +65,117 @@ async def handle_stats(
     await query.answer()
 
 
-async def handle_tariffs(query: CallbackQuery, uow: UnitOfWork, **_) -> None:
+async def handle_tariffs(
+    query: CallbackQuery, uow: UnitOfWork, state: FSMContext, **_
+) -> None:
+    await state.clear()
     tariffs = await uow.tariffs.list_all()
-    await _edit(query, texts.render_tariffs(tariffs), keyboards.admin_back())
+    await _edit(
+        query, texts.render_tariffs(tariffs), keyboards.admin_tariffs(tariffs)
+    )
     await query.answer()
+
+
+async def _show_tariff(
+    query: CallbackQuery, tariff_id: int, uow: UnitOfWork
+) -> None:
+    tariff = await uow.tariffs.get(tariff_id)
+    if tariff is None:
+        await query.answer(texts.USER_NOT_FOUND, show_alert=True)
+        return
+    await _edit(
+        query, texts.render_tariff(tariff), keyboards.admin_tariff(tariff)
+    )
+
+
+async def handle_tariff_card(
+    query: CallbackQuery, uow: UnitOfWork, state: FSMContext, **_
+) -> None:
+    await state.clear()
+    tariff_id = int(
+        (query.data or '').removeprefix(keyboards.ADMIN_TARIFF_PREFIX)
+    )
+    await _show_tariff(query, tariff_id, uow)
+    await query.answer()
+
+
+async def handle_tariff_price(
+    query: CallbackQuery, uow: UnitOfWork, state: FSMContext, **_
+) -> None:
+    tariff_id = int(
+        (query.data or '').removeprefix(keyboards.ADMIN_TARIFF_PRICE_PREFIX)
+    )
+    tariff = await uow.tariffs.get(tariff_id)
+    if tariff is None:
+        await query.answer(texts.USER_NOT_FOUND, show_alert=True)
+        return
+    await state.set_state(AdminTariffPrice.waiting_for_price)
+    await state.update_data(tariff_id=tariff_id)
+    await _edit(
+        query,
+        texts.TARIFF_ASK_PRICE.format(
+            current=texts.rubles(tariff.price_kopeks)
+        ),
+        keyboards.admin_tariff(tariff),
+    )
+    await query.answer()
+
+
+async def handle_tariff_new_price(
+    message: Message, state: FSMContext, uow: UnitOfWork, **_
+) -> None:
+    raw = (message.text or '').strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        # Stay in the state: the admin retypes rather than starting over.
+        await message.answer(texts.TARIFF_BAD_PRICE)
+        return
+
+    data = await state.get_data()
+    tariff_id = data.get('tariff_id')
+    await state.clear()
+    if tariff_id is None:
+        await message.answer(
+            texts.USER_NOT_FOUND, reply_markup=keyboards.admin_back()
+        )
+        return
+
+    # Rubles in, kopeks stored: money never becomes a float.
+    updated = await uow.tariffs.set_price(int(tariff_id), int(raw) * 100)
+    await uow.commit()
+    if updated is None:
+        await message.answer(
+            texts.USER_NOT_FOUND, reply_markup=keyboards.admin_back()
+        )
+        return
+    await message.answer(
+        texts.render_tariff(updated),
+        reply_markup=keyboards.admin_tariff(updated),
+    )
+
+
+async def handle_tariff_toggle(
+    query: CallbackQuery, uow: UnitOfWork, state: FSMContext, **_
+) -> None:
+    await state.clear()
+    tariff_id = int(
+        (query.data or '').removeprefix(keyboards.ADMIN_TARIFF_TOGGLE_PREFIX)
+    )
+    tariff = await uow.tariffs.get(tariff_id)
+    if tariff is None:
+        await query.answer(texts.USER_NOT_FOUND, show_alert=True)
+        return
+
+    updated = await uow.tariffs.set_active(tariff_id, not tariff.is_active)
+    await uow.commit()
+    if updated is None:  # pragma: no cover - it existed a line ago
+        await query.answer(texts.USER_NOT_FOUND, show_alert=True)
+        return
+    await query.answer(
+        texts.TARIFF_ENABLED if updated.is_active else texts.TARIFF_DISABLED
+    )
+    await _edit(
+        query, texts.render_tariff(updated), keyboards.admin_tariff(updated)
+    )
 
 
 async def handle_find_user(
@@ -378,6 +485,9 @@ def build_router(settings: Settings) -> Router:
     router.message.register(handle_ping, Command('ping'))
     router.message.register(handle_user_query, AdminFindUser.waiting_for_query)
     router.message.register(
+        handle_tariff_new_price, AdminTariffPrice.waiting_for_price
+    )
+    router.message.register(
         handle_broadcast_draft, AdminBroadcast.waiting_for_message
     )
     # Registered after the stateful handlers: a reply only means "answer
@@ -390,6 +500,17 @@ def build_router(settings: Settings) -> Router:
     )
     router.callback_query.register(
         handle_tariffs, F.data == keyboards.ADMIN_TARIFFS
+    )
+    router.callback_query.register(
+        handle_tariff_price,
+        F.data.startswith(keyboards.ADMIN_TARIFF_PRICE_PREFIX),
+    )
+    router.callback_query.register(
+        handle_tariff_toggle,
+        F.data.startswith(keyboards.ADMIN_TARIFF_TOGGLE_PREFIX),
+    )
+    router.callback_query.register(
+        handle_tariff_card, F.data.startswith(keyboards.ADMIN_TARIFF_PREFIX)
     )
     router.callback_query.register(
         handle_find_user, F.data == keyboards.ADMIN_FIND_USER
