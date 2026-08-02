@@ -90,13 +90,12 @@ class PaymentService:
 
         payment_id = uuid.uuid4()
         ttl = self._settings.invoice_ttl_minutes
-        invoice = await provider.create_invoice(
-            payment_id,
-            amount_kopeks=tariff.price_kopeks,
-            description=f'Rillza VPN — {tariff.title_ru}',
-            ttl_minutes=ttl,
-        )
 
+        # The row goes first, and its id is the label the provider will
+        # quote back. Asking the provider first meant a crash between
+        # its answer and the commit left a payable link whose label
+        # matched no row — and both the poller and the late sweep walk
+        # rows, so money paid on it would be invisible to everything.
         payment = Payment(
             id=payment_id,
             user_id=telegram_id,
@@ -104,11 +103,35 @@ class PaymentService:
             provider=provider_name,
             status=PaymentStatus.PENDING,
             amount_kopeks=tariff.price_kopeks,
-            provider_invoice_id=invoice.provider_invoice_id,
-            invoice_url=invoice.url,
             invoice_expires_at=utcnow() + timedelta(minutes=ttl),
         )
         await self._uow.payments.add(payment)
+        await self._uow.commit()
+
+        try:
+            invoice = await provider.create_invoice(
+                payment_id,
+                amount_kopeks=tariff.price_kopeks,
+                description=f'Rillza VPN — {tariff.title_ru}',
+                ttl_minutes=ttl,
+            )
+        except PaymentError as error:
+            # No invoice was issued, so no money can arrive on this id.
+            # Close it now rather than let the poller chase it for the
+            # whole TTL, and say so — this path used to be silent.
+            logger.warning(
+                'Invoice {} for user {} was not issued by {}: {}',
+                payment_id,
+                telegram_id,
+                provider_name,
+                error,
+            )
+            await self._uow.payments.mark_expired(payment_id)
+            await self._uow.commit()
+            raise
+
+        payment.provider_invoice_id = invoice.provider_invoice_id
+        payment.invoice_url = invoice.url
         await self._uow.commit()
         logger.info(
             'Invoice {} created for user {} ({}, {} kopeks)',

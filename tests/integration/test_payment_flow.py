@@ -13,7 +13,7 @@ from app.core.enums import (
 )
 from app.core.settings import Settings
 from app.db.models import Payment
-from app.integrations.payments import PaymentRegistry
+from app.integrations.payments import PaymentError, PaymentRegistry
 from app.services.payment_service import FinalizeOutcome, PaymentService
 from app.services.subscription_service import SubscriptionService
 from app.services.uow import UnitOfWork
@@ -557,3 +557,40 @@ class TestStaleWorkerCannotDoubleApply:
             assert subscription.expires_at == start + timedelta(
                 days=tariff.duration_days
             )
+
+
+class TestTheRowExistsBeforeTheProviderDoes:
+    """The docstring said "record the invoice, then ask the provider" —
+    the code did the opposite. Dying between the provider answering and
+    the commit leaves a payable link at the provider whose label matches
+    no row: the poller iterates rows, the late sweep iterates rows, so
+    money paid on it is invisible to everything.
+
+    Reproduced for real: the bot was restarted mid-purchase and the
+    payment simply did not exist afterwards.
+    """
+
+    async def test_a_failing_provider_still_leaves_a_record(
+        self, payments, tariff, provider, uow, session_factory
+    ) -> None:
+        provider.offline = True
+
+        with pytest.raises(PaymentError):
+            await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+
+        async with UnitOfWork(session_factory) as fresh:
+            rows = await fresh.payments.list_by_user(USER_ID)
+            assert len(rows) == 1
+            # Closed, so the poller does not chase an invoice that was
+            # never issued.
+            assert rows[0].status == PaymentStatus.EXPIRED
+            assert rows[0].invoice_url is None
+
+    async def test_a_good_invoice_still_arrives_complete(
+        self, payments, tariff, provider, uow
+    ) -> None:
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+
+        assert payment.status == PaymentStatus.PENDING
+        assert payment.invoice_url
+        assert payment.provider_invoice_id == f'inv-{payment.id}'
