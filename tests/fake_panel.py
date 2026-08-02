@@ -130,8 +130,8 @@ class FakePanel:
         return PanelStats(
             onlineUsers=len(self.users),
             nodesList=[
-                NodeStatus(name='nl-1', online=True),
-                NodeStatus(name='nl-2', online=self.all_nodes_online),
+                NodeStatus(name='nl-1', online=2),
+                NodeStatus(name='nl-2', online=0),
             ],
             nodes={'total': 2, 'online': 2 if self.all_nodes_online else 1},
             users={'total': len(self.users), 'enabled': len(self.users)},

@@ -81,10 +81,15 @@ def render_stats(stats, panel_stats, now: datetime) -> str:
             f'ноды: {panel_stats.nodes_online} из {panel_stats.nodes_total} '
             f'онлайн, пользователей онлайн: {panel_stats.online_users}'
         )
-        if panel_stats.offline_nodes:
-            # An offline node silently vanishes from subscriptions.
-            offline = ', '.join(panel_stats.offline_nodes)
-            lines.append(f'⚠️ офлайн: {offline}')
+        if panel_stats.nodes_offline:
+            # A node that drops out vanishes from subscriptions without
+            # an error; the user just sees a shorter server list.
+            lines.append(
+                f'⚠️ офлайн нод: {panel_stats.nodes_offline} — '
+                f'смотрите список нод в панели'
+            )
+        for node in panel_stats.nodes_list:
+            lines.append(f'· {escape(node.name)}: {node.online_users} онлайн')
 
     lines += ['', '<b>Фоновые задачи</b>']
     if not stats.heartbeats:

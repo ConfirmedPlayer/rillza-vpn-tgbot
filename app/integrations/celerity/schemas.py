@@ -137,8 +137,22 @@ class PanelHealth(PanelModel):
 
 
 class NodeStatus(PanelModel):
+    """One entry of ``nodesList`` in GET /api/stats.
+
+    ``online`` is a *count of connected users*, not an up/down flag —
+    verified against the live panel, which answered ``online: 2`` for a
+    node carrying both of its two users while reporting the whole fleet
+    as ``nodes: {"total": 2, "online": 2}``. Reading it as a boolean
+    raised a validation error the moment a node passed one user, and
+    before that it called every idle node offline.
+
+    Whether a node is actually up lives in GET /api/nodes as
+    ``status``; that payload also carries the node's SSH private key,
+    so the bot does not fetch it for a status line.
+    """
+
     name: str = ''
-    online: bool = False
+    online_users: int = Field(default=0, alias='online')
 
 
 class PanelStats(PanelModel):
@@ -157,11 +171,13 @@ class PanelStats(PanelModel):
 
     @property
     def nodes_online(self) -> int:
-        return self.nodes.get(
-            'online', sum(1 for node in self.nodes_list if node.online)
-        )
+        return self.nodes.get('online', 0)
 
     @property
-    def offline_nodes(self) -> list[str]:
-        """A node that drops out silently disappears from subscriptions."""
-        return [node.name for node in self.nodes_list if not node.online]
+    def nodes_offline(self) -> int:
+        """A node that drops out silently disappears from subscriptions.
+
+        Counted rather than named: ``nodesList`` says how many users each
+        node carries, never whether it answers.
+        """
+        return max(0, self.nodes_total - self.nodes_online)

@@ -535,3 +535,68 @@ class TestSecrets:
         assert any('/api/groups' in message for message in captured)
         assert 'ck_test' not in json.dumps(captured)
         await client.close()
+
+
+#: Captured verbatim from the live panel on 2026-08-02. Two nodes, both
+#: up, two users connected — all of them through the Xray node.
+LIVE_STATS = {
+    'users': {'total': 7, 'enabled': 7},
+    'nodes': {'total': 2, 'online': 2},
+    'onlineUsers': 2,
+    'nodesList': [
+        {'name': 'Hysteria 2', 'online': 0},
+        {'name': 'Xray TCP', 'online': 2},
+    ],
+    'lastSync': '2026-08-02T09:45:00.221Z',
+}
+
+
+class TestFleetStats:
+    """``nodesList[].online`` counts users, it is not an up/down flag.
+
+    Reading it as a boolean broke the admin screen outright once a node
+    carried more than one user, and before that it quietly called every
+    idle node offline — the one alarm that is supposed to mean a node
+    has silently dropped out of every subscription.
+    """
+
+    async def test_the_panels_own_payload_parses(self, client, mocked) -> None:
+        mocked.get(f'{BASE}/api/stats', payload=LIVE_STATS)
+
+        stats = await client.stats()
+
+        assert stats.nodes_total == 2
+        assert stats.nodes_online == 2
+        assert stats.online_users == 2
+        await client.close()
+
+    async def test_an_idle_node_is_not_reported_offline(
+        self, client, mocked
+    ) -> None:
+        mocked.get(f'{BASE}/api/stats', payload=LIVE_STATS)
+
+        stats = await client.stats()
+
+        # Hysteria carries nobody right now; that is not an outage.
+        assert stats.nodes_offline == 0
+        await client.close()
+
+    async def test_a_node_that_is_down_is_counted(
+        self, client, mocked
+    ) -> None:
+        payload = LIVE_STATS | {'nodes': {'total': 2, 'online': 1}}
+        mocked.get(f'{BASE}/api/stats', payload=payload)
+
+        stats = await client.stats()
+
+        assert stats.nodes_offline == 1
+        await client.close()
+
+    async def test_per_node_user_counts_survive(self, client, mocked) -> None:
+        mocked.get(f'{BASE}/api/stats', payload=LIVE_STATS)
+
+        stats = await client.stats()
+
+        counts = {node.name: node.online_users for node in stats.nodes_list}
+        assert counts == {'Hysteria 2': 0, 'Xray TCP': 2}
+        await client.close()
