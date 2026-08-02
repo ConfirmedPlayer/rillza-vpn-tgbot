@@ -686,3 +686,30 @@ class TestGrantSurvivesAPanelOutage:
         )
 
         assert any('Подписка' in text for text in edited_texts(session))
+
+
+class TestAnAdminIsStillAUser:
+    """The admin router is included first and its message filter matches
+    every private message from an admin, so a catch-all registered there
+    swallows the user-side commands too — /start included, which is how
+    an admin reaches the menu to buy or take a trial.
+    """
+
+    async def test_start_still_opens_the_menu(
+        self, dispatcher, bot, session
+    ) -> None:
+        await dispatcher.feed_update(bot, message_update('/start'))
+
+        texts_seen = sent_texts(session)
+        assert not any('никуда не ушло' in text for text in texts_seen)
+        assert any(
+            'Rillza' in text or 'подписк' in text for text in texts_seen
+        )
+
+    async def test_prose_still_stops_at_the_admin_router(
+        self, dispatcher, bot, session
+    ) -> None:
+        """The fix must not reopen the self-ticket hole."""
+        await dispatcher.feed_update(bot, message_update('просто текст'))
+
+        assert any('никуда не ушло' in t for t in sent_texts(session))

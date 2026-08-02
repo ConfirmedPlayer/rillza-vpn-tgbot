@@ -404,6 +404,17 @@ async def handle_support_reply(
     )
 
 
+def _is_prose(message: Message) -> bool:
+    """Only free text stops here; commands belong to the user routers.
+
+    The admin router is included first and claims every private message
+    from an admin, so a catch-all without this filter also swallows
+    /start — and an admin could no longer reach the menu to take a
+    trial or buy anything.
+    """
+    return not (message.text or '').startswith('/')
+
+
 async def handle_stray_message(
     message: Message, state: FSMContext, **_
 ) -> None:
@@ -532,9 +543,10 @@ def build_router(settings: Settings) -> Router:
     # Registered after the stateful handlers: a reply only means "answer
     # this user" when the admin is not in the middle of another flow.
     router.message.register(handle_support_reply, F.reply_to_message)
-    # Last: whatever an admin types that nothing above claimed must not
-    # reach the support router and become a ticket from the admin.
-    router.message.register(handle_stray_message)
+    # Last: whatever an admin *types* that nothing above claimed must
+    # not reach the support router and become a ticket from the admin.
+    # Commands pass through — the admin is also a user.
+    router.message.register(handle_stray_message, _is_prose)
 
     router.callback_query.register(handle_menu, F.data == keyboards.ADMIN_MENU)
     router.callback_query.register(
