@@ -326,6 +326,11 @@ class PaymentService:
             result = await self.check_and_finalize(payment.id)
             if result.outcome is FinalizeOutcome.PROVISIONED:
                 delivered.append(result)
+            # An invoice the provider has not seen yet takes no commit
+            # of its own, so its FOR UPDATE row lock would be held for
+            # the rest of the run — and the user tapping "я оплатил"
+            # would be told "проверяем…" until the sweep finished.
+            await self._uow.commit()
         return delivered
 
     async def finish_provisioning(self) -> list[FinalizeResult]:

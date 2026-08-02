@@ -63,11 +63,10 @@ class TestUsers:
         assert user.username == 'new'
         assert await uow.users.count() == 1
 
-    async def test_upsert_preserves_flags(self, uow: UnitOfWork) -> None:
-        """A profile refresh on every update must not clear state."""
+    async def test_upsert_keeps_the_trial_latch(self, uow: UnitOfWork) -> None:
+        """A profile refresh must not hand out a second free trial."""
         await uow.users.upsert(1)
         await uow.users.mark_trial_used(1, NOW)
-        await uow.users.set_bot_blocked(1, True)
         await uow.commit()
 
         await uow.users.upsert(1, username='renamed')
@@ -76,7 +75,26 @@ class TestUsers:
         user = await uow.users.get(1)
         assert user is not None
         assert user.trial_used_at is not None
-        assert user.is_bot_blocked is True
+
+    async def test_upsert_clears_the_blocked_flag(
+        self, uow: UnitOfWork
+    ) -> None:
+        """Unlike the trial latch, this one describes reachability.
+
+        A blocked user cannot send anything, so an incoming update is
+        proof the block is gone. Keeping the flag set left everyone who
+        blocked the bot once out of every broadcast for good.
+        """
+        await uow.users.upsert(1)
+        await uow.users.set_bot_blocked(1, True)
+        await uow.commit()
+
+        await uow.users.upsert(1, username='renamed')
+        await uow.commit()
+
+        user = await uow.users.get(1)
+        assert user is not None
+        assert user.is_bot_blocked is False
 
     async def test_trial_latch_grants_once(self, uow: UnitOfWork) -> None:
         await make_user(uow, 1)

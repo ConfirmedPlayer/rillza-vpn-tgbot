@@ -151,6 +151,21 @@ class ReconcileService:
             report.expiry_fixed += 1
             return
 
+        if (
+            subscription.status == SubscriptionStatus.PENDING
+            and panel_user.enabled
+        ):
+            # The panel is healthy and holds the right date, so the row
+            # simply never heard that provisioning finished. Left alone
+            # it stays PENDING for ever: the screen says «Выдаём
+            # доступ» over a working link, and expiry_sync and the
+            # reminders both skip it because they filter on ACTIVE.
+            subscription.status = SubscriptionStatus.ACTIVE
+            subscription.provisioned_at = (
+                subscription.provisioned_at or utcnow()
+            )
+            report.expiry_fixed += 1
+
         subscription.last_synced_at = utcnow()
         if subscription.subscription_token != panel_user.subscription_token:
             subscription.subscription_token = panel_user.subscription_token

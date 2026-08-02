@@ -73,3 +73,26 @@ async def test_group_updates_are_dropped_before_the_database(
         # The upsert middleware still runs for any update it can attribute
         # to a user; what must not happen is a reply.
         assert await uow.subscriptions.get_by_user(42) is None
+
+
+async def test_writing_again_clears_the_blocked_flag(
+    wired_dispatcher, bot, session_factory
+) -> None:
+    """The flag is set when Telegram refuses a send and was never
+    cleared, so anyone who blocked the bot once and came back stayed
+    out of every broadcast for good. A message from them is proof they
+    are reachable again.
+    """
+    await wired_dispatcher.feed_update(bot, message_update('/start'))
+    async with UnitOfWork(session_factory) as uow:
+        await uow.users.set_bot_blocked(42, True)
+        await uow.commit()
+
+    await wired_dispatcher.feed_update(bot, message_update('/start'))
+
+    async with UnitOfWork(session_factory) as uow:
+        user = await uow.users.get(42)
+        assert user is not None
+        assert user.is_bot_blocked is False
+        targets = await uow.users.iter_broadcast_targets()
+        assert 42 in [u.id for u in targets]

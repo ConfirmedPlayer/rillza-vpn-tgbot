@@ -151,9 +151,16 @@ class SubscriptionService:
         except PanelNotFoundError:
             # No account yet (an earlier provisioning failed) or it was
             # removed in the panel: create it rather than lose the days.
-            panel_user, _ = await self._panel.create_or_get_user(
+            panel_user, created = await self._panel.create_or_get_user(
                 subscription.panel_user_id, expire_at=subscription.expires_at
             )
+            if not created:
+                # It existed after all, so the create carried no date
+                # and the account still holds the old one. Reporting
+                # success here left the panel behind the database.
+                panel_user = await self._panel.set_expiry(
+                    subscription.panel_user_id, subscription.expires_at
+                )
         subscription.subscription_token = (
             panel_user.subscription_token or subscription.subscription_token
         )

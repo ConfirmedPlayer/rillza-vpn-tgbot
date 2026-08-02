@@ -228,3 +228,22 @@ async def test_a_renewal_during_the_run_is_not_undone(
 
     # The customer paid; their access must survive the sweep.
     assert panel.users[str(USER_ID)].enabled is True
+
+
+async def test_a_pending_row_with_a_healthy_account_is_finished(
+    uow, subscriptions, reconciler, panel
+) -> None:
+    """Provisioning that succeeded on the panel but never got its commit
+    left the row PENDING for ever: «Выдаём доступ» over a working link,
+    invisible to expiry_sync and to the reminders, which both filter on
+    ACTIVE.
+    """
+    subscription = await make_subscription(uow, subscriptions)
+    subscription.status = SubscriptionStatus.PENDING
+    await uow.commit()
+    assert panel.users[str(USER_ID)].enabled is True
+
+    await reconciler.run()
+
+    assert subscription.status == SubscriptionStatus.ACTIVE
+    assert subscription.provisioned_at is not None

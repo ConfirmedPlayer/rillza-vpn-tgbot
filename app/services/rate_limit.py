@@ -21,10 +21,19 @@ class RedisRateLimiter:
         self._prefix = prefix
 
     async def allow(self, key: str, limit: int, window: int) -> bool:
+        """Count this hit and make sure the counter can expire.
+
+        The two commands go in one transaction, and the TTL is set with
+        NX rather than only on the first hit: a process that died
+        between INCR and EXPIRE used to leave a counter with no TTL at
+        all, which only ever grows — locking that user out of support
+        for good.
+        """
         full_key = f'{self._prefix}:{key}'
-        count = await self._redis.incr(full_key)
-        if count == 1:
-            await self._redis.expire(full_key, window)
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.incr(full_key)
+            pipe.expire(full_key, window, nx=True)
+            count, _ = await pipe.execute()
         return count <= limit
 
 

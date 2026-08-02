@@ -114,14 +114,19 @@ async def run() -> None:
         )
         await dispatcher.start_polling(bot)
     finally:
+        # The scheduler goes first: closing the bot session under a
+        # running job left a resuming broadcast marking its whole
+        # remaining audience 'failed' and then DONE, so nobody past the
+        # cursor ever heard from it. wait=False because these jobs run
+        # on this very loop — waiting on them here would deadlock.
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
         # Let the Telegram sink flush before its bot session is closed.
         await logger.complete()
         await dispatcher.storage.close()
         await bot.session.close()
         if log_bot is not None:
             await log_bot.session.close()
-        if scheduler.running:
-            scheduler.shutdown(wait=False)
         await panel.close()
         await providers.close()
         await engine.dispose()

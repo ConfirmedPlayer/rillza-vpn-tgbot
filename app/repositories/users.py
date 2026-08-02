@@ -25,15 +25,24 @@ class UsersRepository:
     ) -> User:
         """Create the user or refresh their Telegram profile fields.
 
-        Called on every incoming update, so it must not touch anything
-        else on the row (notably not the bot-blocked flag).
+        Called on every incoming update, so it must not touch the latches
+        that decide what someone is owed — notably not ``trial_used_at``.
+
+        ``is_bot_blocked`` is different: it is set when Telegram refuses
+        a send, and nothing else ever cleared it, so anyone who blocked
+        the bot once and came back stayed out of every broadcast for
+        good. An incoming message is proof they are reachable again.
         """
         statement = (
             insert(User)
             .values(id=telegram_id, username=username, first_name=first_name)
             .on_conflict_do_update(
                 index_elements=[User.id],
-                set_={'username': username, 'first_name': first_name},
+                set_={
+                    'username': username,
+                    'first_name': first_name,
+                    'is_bot_blocked': False,
+                },
             )
             .returning(User)
         )

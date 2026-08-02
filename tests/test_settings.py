@@ -86,3 +86,32 @@ def test_product_defaults(settings) -> None:
     assert settings.invoice_ttl_minutes == 30
     assert settings.panel_group_name == 'Celerity Primary Access'
     assert settings.yoomoney_payment_type == 'AC'
+
+
+def test_a_password_with_a_percent_survives_alembic_config() -> None:
+    """alembic's Config is a ConfigParser, which interpolates '%'.
+
+    docs/SETUP.md tells the operator to generate the Postgres password
+    themselves, so one will contain '%' sooner or later. Unescaped, it
+    makes `alembic upgrade head` raise inside docker-entrypoint.sh and
+    the container crash-loops before the bot ever polls.
+    """
+    from alembic.config import Config
+
+    url = 'postgresql+asyncpg://rillza:pa%ss@postgres:5432/rillza'
+    config = Config()
+
+    config.set_main_option('sqlalchemy.url', url.replace('%', '%%'))
+
+    assert config.get_main_option('sqlalchemy.url') == url
+
+
+def test_the_percent_really_does_break_it_unescaped() -> None:
+    """Otherwise the test above would prove nothing."""
+    from alembic.config import Config
+
+    config = Config()
+    with pytest.raises(ValueError, match='interpolation'):
+        config.set_main_option(
+            'sqlalchemy.url', 'postgresql+asyncpg://u:pa%ss@db:5432/x'
+        )
