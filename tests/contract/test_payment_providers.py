@@ -398,3 +398,28 @@ class TestCryptoBot:
     async def test_missing_token_is_refused(self, settings) -> None:
         with pytest.raises(PaymentError):
             CryptoBotProvider(settings)
+
+
+class TestCryptoBotInvoiceId:
+    async def test_an_invoice_without_an_id_is_refused(
+        self, mocked, make_settings
+    ) -> None:
+        """Stored as the string 'None' it addresses nothing: the lookup
+        never matches, so the payment sits pending until it expires, and
+        a second one collides on the unique index."""
+        from app.integrations.payments.cryptobot import CryptoBotProvider
+
+        provider = CryptoBotProvider(make_settings(cryptobot_token='cb'))
+        mocked.post(
+            'https://pay.crypt.bot/api/createInvoice',
+            payload={'ok': True, 'result': {'bot_invoice_url': 'https://x'}},
+        )
+
+        with pytest.raises(PaymentError):
+            await provider.create_invoice(
+                uuid.uuid4(),
+                amount_kopeks=20_000,
+                description='x',
+                ttl_minutes=30,
+            )
+        await provider.close()

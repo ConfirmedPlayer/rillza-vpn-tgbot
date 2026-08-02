@@ -19,6 +19,11 @@ OUTCOME_TEXTS = {
 }
 
 
+async def handle_stray(message: Message, **_: object) -> None:
+    """Someone typed instead of tapping. Point them at the menu."""
+    await message.answer(texts.STRAY, reply_markup=keyboards.back_to_menu())
+
+
 async def handle_open(
     query: CallbackQuery, state: FSMContext, **_: object
 ) -> None:
@@ -50,4 +55,8 @@ def build_router() -> Router:
 
     router.callback_query.register(handle_open, F.data == keyboards.SUPPORT)
     router.message.register(handle_message, Support.writing)
+    # Last of the user-side message handlers: a person who types
+    # something outside the support flow used to get no answer at all,
+    # which is indistinguishable from the bot being down.
+    router.message.register(handle_stray)
     return router

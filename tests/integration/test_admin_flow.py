@@ -108,13 +108,23 @@ class TestAccess:
 
         assert any('Админка' in text for text in sent_texts(session))
 
-    async def test_non_admin_gets_nothing(
+    async def test_non_admin_gets_no_panel(
         self, outsider_dispatcher, bot, session
     ) -> None:
-        """Not an error message — the panel simply does not exist."""
-        await outsider_dispatcher.feed_update(bot, message_update('/admin'))
+        """Not an error message — the panel simply does not exist.
 
-        assert session.requests == []
+        They do get the same "я понимаю только кнопки" every unknown
+        message gets, which is what makes /admin indistinguishable from
+        any other typing: a silent command would be the tell.
+        """
+        await outsider_dispatcher.feed_update(bot, message_update('/admin'))
+        panel_reply = sent_texts(session)
+
+        await outsider_dispatcher.feed_update(bot, message_update('привет'))
+        ordinary_reply = sent_texts(session)[len(panel_reply) :]
+
+        assert not any('Админка' in text for text in panel_reply)
+        assert panel_reply == ordinary_reply
 
     async def test_non_admin_cannot_use_admin_callbacks(
         self, outsider_dispatcher, bot, session

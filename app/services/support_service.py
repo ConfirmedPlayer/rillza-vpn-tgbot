@@ -17,7 +17,7 @@ from datetime import timedelta
 from enum import Enum, auto
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 from loguru import logger
 
 from app.bot import keyboards
@@ -34,6 +34,19 @@ RATE_LIMIT = 5
 RATE_WINDOW_SECONDS = 60
 #: A reply after this long re-introduces itself as support.
 HEADER_SILENCE = timedelta(hours=6)
+
+
+class SupportUserUnreachable(Exception):
+    """The user blocked the bot between writing in and being answered.
+
+    Distinct from "no thread": the admin wrote a real reply to a real
+    ticket, and telling them the message was unroutable would send them
+    looking for a bug that is not there.
+    """
+
+    def __init__(self, telegram_id: int) -> None:
+        super().__init__(telegram_id)
+        self.telegram_id = telegram_id
 
 
 class RelayOutcome(Enum):
@@ -150,12 +163,23 @@ class SupportService:
         if thread is None:
             return None
 
-        if await self._needs_header(thread):
-            await self._bot.send_message(thread, texts.REPLY_HEADER)
+        try:
+            if await self._needs_header(thread):
+                await self._bot.send_message(thread, texts.REPLY_HEADER)
 
-        sent = await self._bot.copy_message(
-            chat_id=thread, from_chat_id=admin_chat_id, message_id=message_id
-        )
+            sent = await self._bot.copy_message(
+                chat_id=thread,
+                from_chat_id=admin_chat_id,
+                message_id=message_id,
+            )
+        except TelegramForbiddenError:
+            # They blocked the bot after writing in. Record it so they
+            # drop out of broadcasts, and tell the admin what happened
+            # instead of surfacing a generic "что-то пошло не так".
+            await self._uow.users.set_bot_blocked(thread, True)
+            await self._uow.commit()
+            logger.info('Support reply refused: {} blocked the bot', thread)
+            raise SupportUserUnreachable(thread) from None
         self._uow.session.add(
             SupportMessage(
                 user_id=thread,

@@ -565,3 +565,37 @@ class TestAnAdminCannotFileTicketsWithThemself:
         await dispatcher.feed_update(bot, admin_reply('держите', card))
 
         assert [c.chat_id for c in copies(session)] == [CUSTOMER_ID]
+
+
+class TestAnAnswerToSomeoneWhoBlockedTheBot:
+    async def test_the_admin_is_told_and_the_user_is_marked(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        """Surfacing this as the generic error handler sent the admin
+        hunting for a bug that is not there, and left the user counted
+        as reachable in every future broadcast."""
+        await open_support(dispatcher, bot)
+        await dispatcher.feed_update(bot, user_message('помогите'))
+        card = (await card_ids(session_factory, CUSTOMER_ID))[0]
+        session.requests.clear()
+        session.forbidden_chats = {CUSTOMER_ID}
+
+        await dispatcher.feed_update(bot, admin_reply('держите', card))
+
+        session.forbidden_chats = set()
+        assert any(
+            'заблокировал бота' in t for t in texts_to(session, ADMIN_ID)
+        )
+        async with UnitOfWork(session_factory) as uow:
+            user = await uow.users.get(CUSTOMER_ID)
+            assert user is not None
+            assert user.is_bot_blocked is True
+
+
+async def test_typing_outside_the_flow_gets_an_answer(
+    dispatcher, bot, session
+) -> None:
+    """No reply at all is indistinguishable from the bot being down."""
+    await dispatcher.feed_update(bot, user_message('привет'))
+
+    assert any('кнопки' in text for text in texts_to(session, CUSTOMER_ID))

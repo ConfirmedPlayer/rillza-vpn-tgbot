@@ -21,7 +21,7 @@ from app.services.broadcast_service import BroadcastService
 from app.services.payment_service import FinalizeOutcome, PaymentService
 from app.services.rate_limit import Cooldown
 from app.services.subscription_service import SubscriptionService, utcnow
-from app.services.support_service import SupportService
+from app.services.support_service import SupportService, SupportUserUnreachable
 from app.services.uow import UnitOfWork
 
 #: How far back the user card and the retry button both look.
@@ -262,7 +262,11 @@ async def handle_grant(
     telegram_id, days = int(telegram_id_raw), int(days_raw)
 
     now = utcnow()
-    subscription = await subscriptions.get(telegram_id)
+    # Same serialisation the payment funnel uses. Without it a grant
+    # racing a finalising payment reads the pre-payment expiry and
+    # writes it back, moving the subscription backwards.
+    await uow.subscriptions.lock_user(telegram_id)
+    subscription = await uow.subscriptions.lock_by_user(telegram_id)
     try:
         if subscription is None:
             from app.core.enums import SubscriptionOrigin
@@ -308,7 +312,12 @@ async def handle_revoke(
     try:
         await subscriptions.revoke(subscription)
     except PanelError:
-        await query.answer(texts.PANEL_UNAVAILABLE, show_alert=True)
+        # REVOKED is already committed, so the access is withdrawn as
+        # far as this bot is concerned; only the panel has not heard.
+        # Saying just «панель недоступна» over a stale card read as
+        # "nothing happened, try again".
+        await query.answer(texts.REVOKED_PANEL_PENDING, show_alert=True)
+        await _show_user(query, telegram_id, uow, subscriptions, edit=True)
         return
 
     await query.answer(texts.REVOKED)
@@ -376,11 +385,17 @@ async def handle_support_reply(
     if reply_to is None:
         return
 
-    recipient = await support.relay_to_user(
-        admin_chat_id=message.chat.id,
-        reply_to_message_id=reply_to.message_id,
-        message_id=message.message_id,
-    )
+    try:
+        recipient = await support.relay_to_user(
+            admin_chat_id=message.chat.id,
+            reply_to_message_id=reply_to.message_id,
+            message_id=message.message_id,
+        )
+    except SupportUserUnreachable as unreachable:
+        await message.reply(
+            support_texts.REPLY_BLOCKED.format(user_id=unreachable.telegram_id)
+        )
+        return
     if recipient is None:
         await message.reply(support_texts.REPLY_NO_THREAD)
         return

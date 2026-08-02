@@ -114,9 +114,14 @@ class CryptoBotProvider:
         url = result.get('bot_invoice_url') or result.get('pay_url')
         if not url:
             raise PaymentError('CryptoBot returned an invoice without a URL')
-        return Invoice(
-            url=str(url), provider_invoice_id=str(result.get('invoice_id'))
-        )
+        invoice_id = result.get('invoice_id')
+        if invoice_id is None:
+            # Stored as the string 'None' it addresses nothing: the
+            # lookup by invoice_ids never matches, so the payment stays
+            # pending until it expires, and a second one collides on
+            # uq_payments_provider_invoice_id and kills create_invoice.
+            raise PaymentError('CryptoBot returned an invoice without an id')
+        return Invoice(url=str(url), provider_invoice_id=str(invoice_id))
 
     async def check_payment(
         self, payment_id: UUID, provider_invoice_id: str | None = None

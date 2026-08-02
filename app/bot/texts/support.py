@@ -67,3 +67,14 @@ def render_card(user, subscription, payments, now: datetime) -> str:
     lines.append('')
     lines.append('Ответьте реплаем на это сообщение.')
     return '\n'.join(lines)
+
+
+REPLY_BLOCKED = (
+    'Не доставлено: пользователь {user_id} заблокировал бота. '
+    'Он исключён из рассылок до следующего сообщения от него.'
+)
+
+STRAY = (
+    'Я понимаю только кнопки 🙂\n\n'
+    'Откройте меню — там подписка, оплата и поддержка.'
+)

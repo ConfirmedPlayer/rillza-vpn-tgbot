@@ -28,12 +28,18 @@ class RecordingSession(BaseSession):
         self.requests: list[TelegramMethod[Any]] = []
         #: Answer every call the way Telegram answers a blocked bot.
         self.forbidden = False
+        #: Same, but only for these chats — so a test can block one
+        #: side of a conversation without blocking the other.
+        self.forbidden_chats: set[int] = set()
 
     async def make_request(
         self, bot: Bot, method: TelegramMethod[Any], timeout: int | None = None
     ) -> Any:
         self.requests.append(method)
-        if self.forbidden:
+        chat_id = getattr(method, 'chat_id', None)
+        if self.forbidden or (
+            chat_id is not None and int(chat_id) in self.forbidden_chats
+        ):
             raise TelegramForbiddenError(
                 method=method, message='bot was blocked by the user'
             )

@@ -6,6 +6,7 @@ misfire or an overlapping run cannot send it twice — and a renewal
 clears the marker, starting the cycle over.
 """
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -90,8 +91,23 @@ class NotificationService:
                 telegram_id, text, reply_markup=keyboards.expiring_soon()
             )
         except TelegramRetryAfter as error:
+            # Re-raising aborted the whole pass, and the stage is already
+            # claimed, so every reminder after this one was lost too —
+            # not just the one that hit the limit.
             logger.warning('Flood control while reminding {}', telegram_id)
-            raise error
+            await asyncio.sleep(error.retry_after + 1)
+            try:
+                await self._bot.send_message(
+                    telegram_id, text, reply_markup=keyboards.expiring_soon()
+                )
+            except Exception as retry_error:
+                logger.warning(
+                    'Reminder to {} failed after the wait: {}',
+                    telegram_id,
+                    retry_error,
+                )
+                return 'failed'
+            return 'sent'
         except TelegramForbiddenError:
             await self._uow.users.set_bot_blocked(telegram_id, True)
             await self._uow.commit()
