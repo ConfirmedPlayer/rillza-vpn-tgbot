@@ -1,5 +1,6 @@
 """Trial issuance and the subscription screen, end to end."""
 
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -371,3 +372,45 @@ async def test_pending_subscription_does_not_read_as_expired(
 
     assert 'Выдаём доступ' in text
     assert 'закончился' not in text
+
+
+class TestRevokedAccessStaysRevoked:
+    """A trial that died before the panel answered leaves the row
+    PENDING with no token. Revoking such a row commits REVOKED but the
+    panel call fails — there is no account yet. The still-tappable
+    "получить 3 дня" button then ran the finish-the-pending-row branch,
+    which provisions and sets ACTIVE, handing back the access an admin
+    had just taken away.
+    """
+
+    async def test_a_revoked_pending_trial_is_not_reprovisioned(
+        self, dispatcher, bot, session, session_factory, panel, app_settings
+    ) -> None:
+        from app.core.enums import SubscriptionStatus
+        from app.services.subscription_service import SubscriptionService
+
+        panel.offline = True
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.TRIAL_CONFIRM)
+        )
+        panel.offline = False
+
+        async with UnitOfWork(session_factory) as uow:
+            subscription = await uow.subscriptions.get_by_user(USER_ID)
+            assert subscription is not None
+            assert subscription.subscription_token is None
+            services = SubscriptionService(uow, panel, app_settings)
+            with suppress(Exception):
+                await services.revoke(subscription)
+
+        session.requests.clear()
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.TRIAL_CONFIRM)
+        )
+
+        async with UnitOfWork(session_factory) as uow:
+            subscription = await uow.subscriptions.get_by_user(USER_ID)
+            assert subscription is not None
+            assert subscription.status == SubscriptionStatus.REVOKED
+            assert subscription.subscription_token is None
+        assert str(USER_ID) not in panel.users

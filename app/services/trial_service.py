@@ -10,7 +10,7 @@ than handing out a second trial.
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from app.core.enums import SubscriptionOrigin
+from app.core.enums import SubscriptionOrigin, SubscriptionStatus
 from app.core.settings import Settings
 from app.db.models import Subscription
 from app.integrations.celerity import PanelError
@@ -60,9 +60,17 @@ class TrialService:
     async def grant(self, telegram_id: int, username: str = '') -> TrialResult:
         existing = await self._subscriptions.get(telegram_id)
         if existing is not None:
-            # A pending row means an earlier attempt died before the panel
-            # answered; finish it instead of refusing.
-            if existing.subscription_token is None:
+            # A pending row means an earlier attempt died before the
+            # panel answered; finish it instead of refusing. The status
+            # has to be checked as well as the token: revoking a row
+            # that never reached the panel leaves REVOKED *and* no
+            # token, and finishing that would hand back the access an
+            # admin just took away — the trial button outlives the
+            # keyboard that drew it.
+            if (
+                existing.subscription_token is None
+                and existing.status == SubscriptionStatus.PENDING
+            ):
                 return await self._finish(existing, username)
             return TrialResult(TrialOutcome.HAS_SUBSCRIPTION, existing)
 

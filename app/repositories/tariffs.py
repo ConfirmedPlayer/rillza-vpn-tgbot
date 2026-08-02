@@ -25,6 +25,24 @@ class TariffsRepository:
     async def get(self, tariff_id: int) -> Tariff | None:
         return await self._session.get(Tariff, tariff_id)
 
+    async def get_sellable(self, tariff_id: int) -> Tariff | None:
+        """A tariff the shop may still invoice.
+
+        ``get`` fetches by primary key alone, which is right for reading
+        history — a payment must resolve its tariff long after the plan
+        was withdrawn. It is wrong for selling: callback data comes from
+        the client and need not match any button the bot drew, so a
+        retired promo would stay purchasable at its old price forever.
+        """
+        result = await self._session.execute(
+            select(Tariff).where(
+                Tariff.id == tariff_id,
+                Tariff.is_active.is_(True),
+                Tariff.is_archived.is_(False),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_code(self, code: str) -> Tariff | None:
         result = await self._session.execute(
             select(Tariff).where(Tariff.code == code)

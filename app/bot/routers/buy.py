@@ -35,7 +35,7 @@ async def handle_tariff(
     **_: object,
 ) -> None:
     tariff_id = int((query.data or '').removeprefix(keyboards.TARIFF_PREFIX))
-    tariff = await uow.tariffs.get(tariff_id)
+    tariff = await uow.tariffs.get_sellable(tariff_id)
     if tariff is None:
         await query.answer(ru.PAYMENT_UNKNOWN, show_alert=True)
         return
@@ -66,7 +66,7 @@ async def handle_provider(
     raw = (query.data or '').removeprefix(keyboards.PROVIDER_PREFIX)
     tariff_id, _, provider_name = raw.partition(':')
 
-    tariff = await uow.tariffs.get(int(tariff_id))
+    tariff = await uow.tariffs.get_sellable(int(tariff_id))
     if tariff is None:
         await query.answer(ru.PAYMENT_UNKNOWN, show_alert=True)
         return

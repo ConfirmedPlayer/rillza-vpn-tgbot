@@ -235,3 +235,53 @@ async def test_a_paid_screen_offers_the_subscription_link(
     buttons = button_texts(session)
     assert any('Открыть подписку' in text for text in buttons)
     assert any('Как подключить' in text for text in buttons)
+
+
+async def test_a_withdrawn_tariff_cannot_be_bought(
+    dispatcher, bot, session, session_factory, seeded_tariffs
+) -> None:
+    """Callback data is client-supplied, not proof a button was drawn.
+
+    Taking a tariff off sale has to stop sales of it — otherwise a
+    retired promo stays purchasable at its old price forever, because
+    the row must live on for the payments that reference it.
+    """
+    from tests.integration.test_trial_flow import callback_update
+
+    tariff = seeded_tariffs[0]
+    async with UnitOfWork(session_factory) as uow:
+        await uow.tariffs.set_active(tariff.id, False)
+        await uow.commit()
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.TARIFF_PREFIX}{tariff.id}')
+    )
+    await dispatcher.feed_update(
+        bot,
+        callback_update(f'{keyboards.PROVIDER_PREFIX}{tariff.id}:yoomoney'),
+    )
+
+    async with UnitOfWork(session_factory) as uow:
+        assert await uow.payments.list_by_user(USER_ID) == []
+
+
+async def test_an_archived_tariff_cannot_be_bought(
+    dispatcher, bot, session, session_factory, seeded_tariffs
+) -> None:
+    from tests.integration.test_trial_flow import callback_update
+
+    tariff = seeded_tariffs[1]
+    async with UnitOfWork(session_factory) as uow:
+        stored = await uow.tariffs.get(tariff.id)
+        stored.is_archived = True
+        await uow.commit()
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot,
+        callback_update(f'{keyboards.PROVIDER_PREFIX}{tariff.id}:yoomoney'),
+    )
+
+    async with UnitOfWork(session_factory) as uow:
+        assert await uow.payments.list_by_user(USER_ID) == []
