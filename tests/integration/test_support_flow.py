@@ -512,3 +512,56 @@ class TestBroadcastDoesNotSwallowSupportReplies:
         broadcast = [c for c in copies(session)]
         assert all(c.from_chat_id == ADMIN_ID for c in broadcast)
         assert {c.message_id for c in broadcast} == {DRAFT_MESSAGE_ID}
+
+
+class TestAnAdminCannotFileTicketsWithThemself:
+    """The admin's private chat is the support inbox.
+
+    Pressing «Поддержка» once leaves Support.writing in Redis with
+    nothing on screen to say so, and from then on every plain message
+    the admin types is relayed as a *new ticket from them* — delivered
+    to the admins, which is themselves. It reads exactly like "my answer
+    went to the first person", and the user who was actually waiting
+    gets nothing while the admin believes they answered.
+    """
+
+    async def test_a_plain_message_is_not_relayed_as_a_ticket(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        await open_support(dispatcher, bot, user_id=ADMIN_ID)
+        session.requests.clear()
+
+        await dispatcher.feed_update(
+            bot, user_message('это ответ клиенту', ADMIN_ID)
+        )
+
+        # Nothing was copied anywhere: no ticket was created.
+        assert copies(session) == []
+        async with UnitOfWork(session_factory) as uow:
+            rows = await uow.support.find_recipient(ADMIN_ID, 11)
+            assert rows is None
+
+    async def test_the_admin_is_told_how_to_answer(
+        self, dispatcher, bot, session
+    ) -> None:
+        await open_support(dispatcher, bot, user_id=ADMIN_ID)
+        session.requests.clear()
+
+        await dispatcher.feed_update(
+            bot, user_message('это ответ клиенту', ADMIN_ID)
+        )
+
+        assert any('Ответить' in text for text in texts_to(session, ADMIN_ID))
+
+    async def test_replying_still_reaches_the_user(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        """The fix must not break the one way that does work."""
+        await open_support(dispatcher, bot)
+        await dispatcher.feed_update(bot, user_message('помогите'))
+        card = (await card_ids(session_factory, CUSTOMER_ID))[0]
+        session.requests.clear()
+
+        await dispatcher.feed_update(bot, admin_reply('держите', card))
+
+        assert [c.chat_id for c in copies(session)] == [CUSTOMER_ID]

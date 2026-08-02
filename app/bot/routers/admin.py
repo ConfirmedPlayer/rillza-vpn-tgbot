@@ -383,6 +383,24 @@ async def handle_support_reply(
     )
 
 
+async def handle_stray_message(
+    message: Message, state: FSMContext, **_
+) -> None:
+    """Anything an admin types that is not a reply and not an answer to
+    a prompt stops here.
+
+    The admin's private chat is the support inbox. Without this the
+    message falls through to the support router, and — because pressing
+    «Поддержка» once leaves Support.writing in Redis with nothing on
+    screen to say so — comes back as a *ticket from the admin*,
+    delivered to the admins, which is themselves. It looks like the
+    answer went to whoever wrote first, while the user who was actually
+    waiting gets nothing and the admin believes they replied.
+    """
+    await state.clear()
+    await message.answer(texts.STRAY_MESSAGE)
+
+
 async def handle_support_block(
     query: CallbackQuery, support: SupportService, **_
 ) -> None:
@@ -493,6 +511,9 @@ def build_router(settings: Settings) -> Router:
     # Registered after the stateful handlers: a reply only means "answer
     # this user" when the admin is not in the middle of another flow.
     router.message.register(handle_support_reply, F.reply_to_message)
+    # Last: whatever an admin types that nothing above claimed must not
+    # reach the support router and become a ticket from the admin.
+    router.message.register(handle_stray_message)
 
     router.callback_query.register(handle_menu, F.data == keyboards.ADMIN_MENU)
     router.callback_query.register(
