@@ -64,6 +64,14 @@ class ReconcileService:
             known.add(subscription.panel_user_id)
             panel_user = panel_users.get(subscription.panel_user_id)
             try:
+                # The list above is a snapshot, and this loop makes an
+                # HTTP call per row, so by the time we reach a row it
+                # can be minutes old. expire_on_commit=False means the
+                # in-loop commits never refresh it either. Deciding
+                # from that read switched off users who renewed while
+                # the sweep was running — a customer who had just paid,
+                # cut off until the next run four hours later.
+                await self._uow.session.refresh(subscription)
                 await self._reconcile_one(subscription, panel_user, report)
             except PanelError as error:
                 report.failed += 1

@@ -192,3 +192,39 @@ async def test_pending_subscription_is_finished(
     assert report.created == 1
     assert subscription.status == SubscriptionStatus.ACTIVE
     assert subscription.subscription_token is not None
+
+
+async def test_a_renewal_during_the_run_is_not_undone(
+    uow, subscriptions, reconciler, panel, session_factory
+) -> None:
+    """The reconciler snapshots every subscription up front and, with
+    expire_on_commit=False, never sees a status that changed since.
+
+    An expired user whose payment lands mid-run was still classified
+    from the old read and had their panel account switched off — a
+    customer who has just paid, with no VPN until the next run.
+    """
+    from app.services.uow import UnitOfWork
+
+    subscription = await make_subscription(uow, subscriptions, days=-1)
+    subscription.status = SubscriptionStatus.EXPIRED
+    await uow.commit()
+    assert panel.users[str(USER_ID)].enabled is True
+
+    original = uow.subscriptions.list_all
+
+    async def snapshot_then_someone_renews():
+        rows = await original()
+        # The payment lands right after the snapshot, on its own session.
+        async with UnitOfWork(session_factory) as other:
+            renewed = await other.subscriptions.get_by_user(USER_ID)
+            renewed.status = SubscriptionStatus.ACTIVE
+            renewed.expires_at = datetime.now(UTC) + timedelta(days=30)
+            await other.commit()
+        return rows
+
+    uow.subscriptions.list_all = snapshot_then_someone_renews
+    await reconciler.run()
+
+    # The customer paid; their access must survive the sweep.
+    assert panel.users[str(USER_ID)].enabled is True

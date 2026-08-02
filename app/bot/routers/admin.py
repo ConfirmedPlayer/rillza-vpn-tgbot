@@ -279,7 +279,13 @@ async def handle_grant(
                 subscription, base + timedelta(days=days)
             )
     except PanelError:
-        await query.answer(texts.PANEL_UNAVAILABLE, show_alert=True)
+        # The days were committed before the panel was called, so they
+        # are granted whatever happened next; the reconciler pushes the
+        # date within the hour. Saying only "панель недоступна" and
+        # leaving the old date on the card invited a second tap, and
+        # the second tap added the days again.
+        await query.answer(texts.GRANTED_PANEL_PENDING, show_alert=True)
+        await _show_user(query, telegram_id, uow, subscriptions, edit=True)
         return
 
     await query.answer(texts.GRANTED.format(days=days))

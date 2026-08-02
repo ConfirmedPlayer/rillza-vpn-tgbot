@@ -632,3 +632,47 @@ class TestTariffEditing:
         assert not any(
             tariff.title_ru in text for text in button_texts(session)
         )
+
+
+class TestGrantSurvivesAPanelOutage:
+    """The days are committed before the panel is called, so a panel
+    failure does not mean the grant did not happen. Reporting only
+    «Панель недоступна» and leaving the stale card on screen invited the
+    admin to tap again, and the second tap added the days a second time.
+    """
+
+    async def test_the_admin_is_told_the_days_landed(
+        self, dispatcher, bot, session, session_factory, panel
+    ) -> None:
+        async with UnitOfWork(session_factory) as uow:
+            await uow.users.upsert(CUSTOMER_ID)
+            await uow.commit()
+        panel.offline = True
+
+        await dispatcher.feed_update(
+            bot,
+            callback_update(f'{keyboards.ADMIN_GRANT_PREFIX}{CUSTOMER_ID}:30'),
+        )
+
+        # The days are in the database whatever the panel did.
+        async with UnitOfWork(session_factory) as uow:
+            subscription = await uow.subscriptions.get_by_user(CUSTOMER_ID)
+            assert subscription is not None
+            assert (subscription.expires_at - datetime.now(UTC)).days == 29
+        # And the admin is told so, rather than being invited to retry.
+        assert any('ачислен' in alert for alert in alerts(session))
+
+    async def test_the_card_is_refreshed_so_the_new_date_is_visible(
+        self, dispatcher, bot, session, session_factory, panel
+    ) -> None:
+        async with UnitOfWork(session_factory) as uow:
+            await uow.users.upsert(CUSTOMER_ID)
+            await uow.commit()
+        panel.offline = True
+
+        await dispatcher.feed_update(
+            bot,
+            callback_update(f'{keyboards.ADMIN_GRANT_PREFIX}{CUSTOMER_ID}:30'),
+        )
+
+        assert any('Подписка' in text for text in edited_texts(session))
