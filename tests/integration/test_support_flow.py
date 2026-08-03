@@ -19,7 +19,7 @@ from sqlalchemy import select
 from app.bot import keyboards
 from app.core.enums import SubscriptionOrigin, SupportDirection
 from app.core.settings import Settings
-from app.db.models import SupportMessage
+from app.db.models import Broadcast, SupportMessage
 from app.integrations.payments import PaymentRegistry
 from app.main import build_dispatcher
 from app.services.subscription_service import SubscriptionService
@@ -749,3 +749,76 @@ class TestComposedRequest:
 
         assert texts_to(session, ADMIN_ID) == []
         assert any('Слишком много' in alert for alert in alerts(session))
+
+
+class TestReplyDuringAnotherAdminFlow:
+    """The admin's private chat is also the support inbox.
+
+    Every stateful admin flow therefore competes with incoming tickets.
+    For most of them losing the race is harmless — a reply swallowed as
+    a search query answers «не найден». The broadcast draft is the one
+    where it is not: the private answer becomes a message addressed to
+    every user of the bot.
+    """
+
+    async def test_a_reply_is_delivered_while_a_broadcast_is_being_composed(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        await open_support(dispatcher, bot)
+        await dispatcher.feed_update(bot, user_message('не подключается'))
+        async with UnitOfWork(session_factory) as uow:
+            rows = (
+                (
+                    await uow.session.execute(
+                        select(SupportMessage).where(
+                            SupportMessage.user_id == CUSTOMER_ID
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        card_id = rows[0].admin_message_id
+
+        # The admin taps «Рассылка» and, before typing the draft,
+        # answers the ticket that just arrived.
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.ADMIN_BROADCAST, user_id=ADMIN_ID)
+        )
+        session.requests.clear()
+
+        await dispatcher.feed_update(
+            bot, admin_reply('перезагрузите приложение', card_id)
+        )
+
+        # The user got their answer...
+        assert [c.chat_id for c in copies(session)] == [CUSTOMER_ID]
+        # ...and nothing is queued for everyone.
+        async with UnitOfWork(session_factory) as uow:
+            drafts = (
+                (await uow.session.execute(select(Broadcast))).scalars().all()
+            )
+            assert drafts == []
+
+    async def test_the_confirm_screen_says_what_will_be_sent(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        """«Получателей: N. Отправляем?» never said WHAT is sent.
+
+        That screen is the last place a wrong draft can be caught, and
+        the one thing it did not show was the draft.
+        """
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.ADMIN_BROADCAST, user_id=ADMIN_ID)
+        )
+        session.requests.clear()
+
+        await dispatcher.feed_update(
+            bot, admin_message('Скидка <b>20%</b> до пятницы')
+        )
+
+        confirm = [t for t in texts_to(session, ADMIN_ID) if 'Отправляем' in t]
+        assert confirm, 'экран подтверждения не показан'
+        assert 'Скидка' in confirm[0]
+        # Экранировано: иначе Telegram отвергнет разметку целиком.
+        assert '&lt;b&gt;' in confirm[0]

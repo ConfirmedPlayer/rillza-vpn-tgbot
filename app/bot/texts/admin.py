@@ -52,7 +52,50 @@ BROADCAST_PROMPT = (
     '📣 Отправьте сообщение для рассылки — текст, фото или что угодно.\n\n'
     'Оно уйдёт от имени бота: отправитель не виден.'
 )
-BROADCAST_CONFIRM = 'Получателей: <b>{count}</b>.\n\nОтправляем?'
+BROADCAST_CONFIRM = (
+    'Получателей: <b>{count}</b>.\n\n'
+    'Уйдёт вот это:\n<i>{preview}</i>\n\n'
+    'Отправляем?'
+)
+
+#: How much of a draft the confirm screen shows.
+BROADCAST_PREVIEW_LIMIT = 200
+
+#: Attribute on the message -> what to call it when it carries no text.
+_MEDIA_NAMES = (
+    ('photo', 'фотография'),
+    ('video', 'видео'),
+    ('animation', 'GIF'),
+    ('document', 'файл'),
+    ('audio', 'аудио'),
+    ('voice', 'голосовое сообщение'),
+    ('video_note', 'кружок'),
+    ('sticker', 'стикер'),
+)
+
+
+def render_broadcast_preview(message) -> str:
+    """The draft as the confirm screen shows it.
+
+    A count of recipients cannot catch a wrong draft, and the admin's
+    private chat is also the support inbox — so the message about to
+    reach every user is not always the one they think they typed.
+
+    Escaped: the draft is arbitrary text, and an unescaped '<' would
+    make Telegram reject the whole confirm screen as broken markup.
+    """
+    body = (message.text or message.caption or '').strip()
+    if body:
+        excerpt = body[:BROADCAST_PREVIEW_LIMIT]
+        if len(body) > BROADCAST_PREVIEW_LIMIT:
+            excerpt += '…'
+        return escape(excerpt)
+    for attribute, name in _MEDIA_NAMES:
+        if getattr(message, attribute, None):
+            return f'({name} без подписи)'
+    return '(сообщение без текста)'
+
+
 BROADCAST_RUNNING = 'Рассылка запущена…'
 BROADCAST_DONE = (
     '📣 Рассылка завершена.\n\n'

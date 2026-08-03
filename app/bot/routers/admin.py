@@ -496,7 +496,9 @@ async def handle_broadcast_draft(
     # which any still-visible confirm button would have broadcast.
     await state.clear()
     await message.answer(
-        texts.BROADCAST_CONFIRM.format(count=reachable),
+        texts.BROADCAST_CONFIRM.format(
+            count=reachable, preview=texts.render_broadcast_preview(message)
+        ),
         reply_markup=keyboards.admin_broadcast_confirm(draft.id),
     )
 
@@ -545,7 +547,16 @@ def build_router(settings: Settings) -> Router:
         handle_tariff_new_price, AdminTariffPrice.waiting_for_price
     )
     router.message.register(
-        handle_broadcast_draft, AdminBroadcast.waiting_for_message
+        handle_broadcast_draft,
+        AdminBroadcast.waiting_for_message,
+        # A reply is never a broadcast draft. The other stateful flows
+        # can afford to swallow one — a reply taken as a search query
+        # answers "не найден" — but this one addresses every user of the
+        # bot, so losing the race here turns a private answer into a
+        # message to everybody. The admin's chat is also the support
+        # inbox, so a ticket arriving between "📣 Рассылка" and the
+        # draft is ordinary, not exotic.
+        ~F.reply_to_message,
     )
     # Registered after the stateful handlers: a reply only means "answer
     # this user" when the admin is not in the middle of another flow.
