@@ -85,6 +85,42 @@ def test_every_job_is_registered_with_the_declared_interval() -> None:
         assert jobs[name].max_instances == 1
 
 
+#: How long a job may wait for its first run after a restart. The
+#: existing staggering — one, two and five minutes — is the standard
+#: this holds everything else to.
+FIRST_RUN_CAP = timedelta(minutes=10)
+
+
+async def test_a_restart_does_not_park_a_job_for_a_whole_interval() -> None:
+    """An interval trigger with no explicit first run starts counting at
+    boot, so every restart pushes that job a full interval away. The bot
+    runs on a laptop that sleeps and is rebuilt by hand: the expiry
+    notifier sat an hour out after every start, and a container recreated
+    more often than that would never have reminded anybody at all.
+
+    The three long jobs already carry an explicit first run. This is the
+    rule they follow, written down so the next job added follows it too.
+    """
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    from app.scheduler.jobs import JobRunner, register_jobs
+
+    scheduler = AsyncIOScheduler()
+    register_jobs(scheduler, JobRunner(None, None, None, None, None))
+    # Paused so next_run_time is computed and nothing actually runs.
+    scheduler.start(paused=True)
+    try:
+        now = datetime.now(UTC)
+        for job in scheduler.get_jobs():
+            allowed = min(JOB_INTERVALS[job.id], FIRST_RUN_CAP)
+            delay = job.next_run_time - now
+            assert delay <= allowed, (
+                f'{job.id} first runs {delay} after a restart'
+            )
+    finally:
+        scheduler.shutdown(wait=False)
+
+
 def test_a_live_broadcast_cannot_be_stolen_by_the_resumer() -> None:
     """The resumer runs every five minutes and checkpoints per page.
 

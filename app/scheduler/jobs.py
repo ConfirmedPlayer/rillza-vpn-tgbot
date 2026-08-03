@@ -197,11 +197,18 @@ class JobRunner:
 
 def register_jobs(scheduler: AsyncIOScheduler, runner: JobRunner) -> None:
     common = {'max_instances': 1, 'coalesce': True, 'misfire_grace_time': 60}
-    #: Delay before the first run, for jobs that would otherwise all
-    #: fire at once on a cold start.
+    #: When each of these first runs after a start, staggered so they do
+    #: not land together. An interval trigger with nothing here begins
+    #: counting at boot, which parks the job a whole interval away —
+    #: fine at thirty seconds, not fine at four hours. The bot runs on a
+    #: laptop that sleeps and gets rebuilt by hand, so restarts are
+    #: frequent enough that a long-interval job left out of this table
+    #: can go indefinitely without ever running. The expiry notifier was
+    #: left out and did exactly that.
     first_run = {
         BROADCAST_RESUMER: timedelta(minutes=1),
         RECONCILER: timedelta(minutes=2),
+        EXPIRY_NOTIFIER: timedelta(minutes=3),
         LATE_PAYMENT_SWEEP: timedelta(minutes=5),
     }
     actions = {
