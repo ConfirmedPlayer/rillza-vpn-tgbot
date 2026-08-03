@@ -197,11 +197,13 @@ def providers(
             text=titles(name),
             callback_data=f'{PROVIDER_PREFIX}{tariff_id}:{name}',
         )
-    # Back goes to the tariff list for the device count the buyer
-    # chose, not to the device-count screen — same target the tariff
-    # screen's own back button uses (`tariffs()` above).
+    # Back goes to the tariff list for the device count the buyer chose,
+    # not to the device-count screen. It carries ':ok' because getting
+    # this far already answered the downgrade warning, if there was one
+    # — without it, changing your mind about the payment method sends
+    # you back to a question you have answered.
     builder.button(
-        text='↩️ Назад', callback_data=f'{DEVICES_PREFIX}{max_devices}'
+        text='↩️ Назад', callback_data=f'{DEVICES_PREFIX}{max_devices}:ok'
     )
     builder.adjust(1)
     return builder.as_markup()

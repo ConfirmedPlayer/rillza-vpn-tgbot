@@ -12,7 +12,7 @@ from aiogram.types import CallbackQuery, Chat, Message, Update
 from aiogram.types import User as TelegramUser
 
 from app.bot import keyboards
-from app.core.enums import SubscriptionStatus
+from app.core.enums import SubscriptionOrigin, SubscriptionStatus
 from app.core.settings import Settings
 from app.main import build_dispatcher
 from app.services.subscription_service import SubscriptionService
@@ -451,3 +451,34 @@ class TestRevokedAccessStaysRevoked:
             assert subscription.status == SubscriptionStatus.REVOKED
             assert subscription.subscription_token is None
         assert str(USER_ID) not in panel.users
+
+
+class TestRevokedSubscriptionScreen:
+    async def test_it_offers_no_link_after_access_was_taken_away(
+        self, dispatcher, bot, session, session_factory, panel, app_settings
+    ) -> None:
+        """revoke() deliberately keeps the token — the panel account and
+        its history stay — so the screen still had a working link under
+        the words «доступ приостановлен»."""
+        async with UnitOfWork(session_factory) as uow:
+            await uow.users.upsert(USER_ID)
+            await uow.commit()
+            subscriptions = SubscriptionService(uow, panel, app_settings)
+            subscription = await subscriptions.create_pending(
+                USER_ID,
+                expires_at=datetime.now(UTC) + timedelta(days=30),
+                origin=SubscriptionOrigin.PURCHASE,
+                max_devices=2,
+            )
+            await subscriptions.provision(subscription)
+            await subscriptions.revoke(subscription)
+
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.SUBSCRIPTION)
+        )
+
+        text = edited_texts(session)[-1]
+        assert 'приостановлен' in text
+        buttons = button_texts(session)
+        assert not any('Открыть подписку' in b for b in buttons)
+        assert not any('Скопировать' in b for b in buttons)

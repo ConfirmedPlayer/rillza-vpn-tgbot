@@ -39,6 +39,19 @@ class SubscriptionView:
     def is_provisioned(self) -> bool:
         return self.url is not None
 
+    @property
+    def offer_url(self) -> str | None:
+        """The link to put in front of the user, if any.
+
+        ``revoke`` deliberately keeps the token — the panel account and
+        its history stay, and deleting would revive a leaked link — so
+        ``url`` is still filled for a revoked row. A screen that says
+        access was suspended must not carry a button under it.
+        """
+        if self.subscription.status == SubscriptionStatus.REVOKED:
+            return None
+        return self.url
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)

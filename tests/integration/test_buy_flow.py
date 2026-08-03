@@ -191,7 +191,6 @@ async def test_provider_screen_back_button_returns_to_the_tariff_list(
         bot, callback_update(f'{keyboards.TARIFF_PREFIX}{tariff.id}')
     )
     back = _button(_last_markup(session), '↩️ Назад')
-    assert back.callback_data == f'{keyboards.DEVICES_PREFIX}2'
 
     session.requests.clear()
     await dispatcher.feed_update(bot, callback_update(back.callback_data))
@@ -620,3 +619,41 @@ class TestPaymentThrottling:
 
         assert any('Слишком часто' in alert for alert in alerts(session))
         assert provider.checks == []
+
+
+async def test_back_from_provider_does_not_re_ask_a_confirmed_downgrade(
+    dispatcher, bot, session, session_factory, seeded_tariffs, provider
+) -> None:
+    """The confirmation of a downgrade lives in one callback string.
+
+    A buyer who confirmed it, picked a plan, then changed their mind
+    about the payment method must not be sent back to the warning they
+    already answered.
+    """
+    four = next(t for t in seeded_tariffs if t.code == 'm1x4')
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.PROVIDER_PREFIX}{four.id}:yoomoney')
+    )
+    async with UnitOfWork(session_factory) as uow:
+        payment = (await uow.payments.list_by_user(USER_ID))[0]
+    provider.mark_paid(payment.id)
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.CHECK_PREFIX}{payment.id}')
+    )
+
+    # Down to two devices, warning answered.
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}2:ok')
+    )
+    two = next(t for t in seeded_tariffs if t.code == 'm1')
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.TARIFF_PREFIX}{two.id}')
+    )
+    back = _button(_last_markup(session), '↩️ Назад')
+    session.requests.clear()
+
+    await dispatcher.feed_update(bot, callback_update(back.callback_data))
+
+    text = edited_texts(session)[-1]
+    assert 'Станет меньше устройств' not in text
+    assert '1 месяц · до 2 устройств — 100 ₽' in button_texts(session)

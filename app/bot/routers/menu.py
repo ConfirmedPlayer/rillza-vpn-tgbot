@@ -138,7 +138,7 @@ async def handle_subscription(
     await _edit(
         query,
         render_subscription(view, utcnow()),
-        keyboards.subscription(view.url),
+        keyboards.subscription(view.offer_url),
     )
     await query.answer()
 
@@ -150,7 +150,7 @@ async def handle_guide(
     **_: object,
 ) -> None:
     view = await subscriptions.describe(query.from_user.id)
-    url = view.url if view is not None else None
+    url = view.offer_url if view is not None else None
     text = ru.GUIDE if url else ru.GUIDE_NEEDS_SUBSCRIPTION
     await _edit(query, text, keyboards.guide(settings, url))
     await query.answer()
