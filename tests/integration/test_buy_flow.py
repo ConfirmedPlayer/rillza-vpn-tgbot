@@ -275,6 +275,28 @@ async def test_malformed_payment_id_is_rejected(
     assert any('не найден' in alert for alert in alerts(session))
 
 
+async def test_buy_explains_an_empty_catalog_without_blaming_payments(
+    session_factory, provider, bot, session
+) -> None:
+    """No tariff is on sale at all — a different cause from no payment
+    provider being configured, and BUY_NO_PROVIDERS would point at the
+    wrong one."""
+    settings = Settings(_env_file=None, **BASE_ENV)  # type: ignore[arg-type]
+    dispatcher = build_dispatcher(
+        settings,
+        session_factory,
+        FakePanel(),
+        PaymentRegistry({provider.name: provider}),
+        storage=MemoryStorage(),
+    )
+
+    await dispatcher.feed_update(bot, callback_update(keyboards.BUY))
+
+    text = edited_texts(session)[-1]
+    assert ru.BUY_NO_TARIFFS in text
+    assert 'Оплата' not in text
+
+
 async def test_purchase_is_hidden_when_no_provider_is_configured(
     session_factory, seeded_tariffs, bot, session
 ) -> None:

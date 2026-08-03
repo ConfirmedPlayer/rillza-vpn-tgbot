@@ -603,6 +603,20 @@ class TestTariffEditing:
         for tariff in seeded_tariffs:
             assert any(tariff.title_ru in text for text in buttons)
 
+    async def test_the_tariff_screen_names_the_device_count(
+        self, dispatcher, bot, session, seeded_tariffs
+    ) -> None:
+        four = next(t for t in seeded_tariffs if t.code == 'm1x4')
+
+        await dispatcher.feed_update(
+            bot,
+            callback_update(
+                f'{keyboards.ADMIN_TARIFF_PREFIX}{four.id}', user_id=ADMIN_ID
+            ),
+        )
+
+        assert any('до 4 устройств' in text for text in edited_texts(session))
+
     async def test_a_new_price_reaches_the_database_and_the_shop(
         self, dispatcher, bot, session, session_factory, seeded_tariffs
     ) -> None:

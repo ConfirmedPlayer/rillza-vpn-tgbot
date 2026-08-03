@@ -25,7 +25,9 @@ async def handle_buy(
 ) -> None:
     counts = await uow.tariffs.list_device_counts()
     if not counts:
-        await _edit(query, ru.BUY_NO_PROVIDERS, keyboards.back_to_menu())
+        # Nothing is on sale — a different cause from no payment
+        # provider being configured, which BUY_NO_PROVIDERS is for.
+        await _edit(query, ru.BUY_NO_TARIFFS, keyboards.back_to_menu())
         await query.answer()
         return
     await _edit(query, ru.BUY_CHOOSE_DEVICES, keyboards.devices(counts))

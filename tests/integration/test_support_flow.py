@@ -650,6 +650,18 @@ class TestComposedRequest:
         assert texts_to(session, ADMIN_ID) == []
         assert any('отключены' in alert for alert in alerts(session))
 
+    async def test_the_more_devices_flavour_names_the_count_with_a_noun(
+        self, dispatcher, bot, session
+    ) -> None:
+        """'Сейчас подписка до 2.' reads like a cut-off sentence — the
+        noun after the number is what makes it a device count."""
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.SUPPORT_DEVICES)
+        )
+
+        body = texts_to(session, ADMIN_ID)[-1]
+        assert 'до 2 устройств' in body
+
     async def test_the_downgrade_flavour_names_both_numbers(
         self,
         dispatcher,
@@ -683,6 +695,40 @@ class TestComposedRequest:
         body = texts_to(session, ADMIN_ID)[-1]
         assert 'до 2 устройств' in body
         assert 'до 4' in body
+
+    async def test_the_downgrade_flavour_names_the_current_count_with_a_noun(
+        self,
+        dispatcher,
+        bot,
+        session,
+        session_factory,
+        panel,
+        settings_with_admin,
+    ) -> None:
+        """'оплачено до 4 до 01.10.2026' reads as a single broken
+        number — the noun after {current} is what tells it apart from
+        the date that follows."""
+        async with UnitOfWork(session_factory) as uow:
+            await uow.users.upsert(CUSTOMER_ID)
+            await uow.commit()
+            subscriptions = SubscriptionService(
+                uow, panel, settings_with_admin
+            )
+            subscription = await subscriptions.create_pending(
+                CUSTOMER_ID,
+                expires_at=datetime.now(UTC) + timedelta(days=59),
+                origin=SubscriptionOrigin.PURCHASE,
+                max_devices=4,
+            )
+            await subscriptions.provision(subscription)
+        session.requests.clear()
+
+        await dispatcher.feed_update(
+            bot, callback_update(f'{keyboards.SUPPORT_DEVICES}:2')
+        )
+
+        body = texts_to(session, ADMIN_ID)[-1]
+        assert 'до 4 устройств' in body
 
     async def test_it_is_rate_limited(
         self, settings_with_admin, session_factory, panel, bot, session

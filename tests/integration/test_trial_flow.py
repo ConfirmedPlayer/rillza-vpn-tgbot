@@ -284,6 +284,23 @@ class TestSubscriptionScreen:
             'Открыть подписку' in button for button in button_texts(session)
         )
 
+    async def test_the_subscription_screen_names_the_device_count(
+        self, dispatcher, bot, session
+    ) -> None:
+        """The owner asked for this: nothing in the bot said how many
+        devices a subscription covers."""
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.TRIAL_CONFIRM)
+        )
+        session.requests.clear()
+
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.SUBSCRIPTION)
+        )
+
+        text = edited_texts(session)[-1]
+        assert 'до 2 устройств' in text
+
     async def test_expired_subscription_reads_as_expired(
         self, app_settings, session_factory, panel
     ) -> None:

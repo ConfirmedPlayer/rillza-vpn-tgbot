@@ -135,7 +135,8 @@ def render_tariffs(tariffs) -> str:
         lines.append(
             f'{state} <code>{tariff.code}</code> — {tariff.title_ru}, '
             f'{rubles(tariff.price_kopeks)} за {tariff.duration_days} дн. '
-            f'({rubles(tariff.monthly_price_kopeks)}/мес)'
+            f'({rubles(tariff.monthly_price_kopeks)}/мес), '
+            f'до {tariff.max_devices} устройств'
         )
     lines += ['', 'Выберите тариф, чтобы изменить цену или снять с продажи.']
     return '\n'.join(lines)
@@ -151,6 +152,7 @@ def render_tariff(tariff) -> str:
             f'Цена: <b>{rubles(tariff.price_kopeks)}</b> '
             f'за {tariff.duration_days} дн.',
             f'В месяц: {rubles(tariff.monthly_price_kopeks)}',
+            f'Лимит: до {tariff.max_devices} устройств',
             f'Статус: {state}',
         ]
     )

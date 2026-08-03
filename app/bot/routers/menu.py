@@ -46,6 +46,7 @@ def render_subscription(view, now) -> str:
         text += ru.SUBSCRIPTION_TRAFFIC.format(
             used=ru.format_traffic(view.info.traffic.total_bytes)
         )
+    text += ru.SUBSCRIPTION_DEVICES.format(devices=subscription.max_devices)
     if view.is_provisioned:
         text += ru.SUBSCRIPTION_HINT
     return text
