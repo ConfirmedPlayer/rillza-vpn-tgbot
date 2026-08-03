@@ -53,7 +53,10 @@ class PanelUser(PanelModel):
     expire_at: datetime | None = Field(default=None, alias='expireAt')
     # Bytes; 0 means unlimited.
     traffic_limit: int = Field(default=0, alias='trafficLimit')
-    # 0 = inherit the group's limit, -1 = unlimited.
+    # 0 = inherit the group's limit, -1 = unlimited. Also what this
+    # parses to when the panel's response simply omits the field —
+    # see subscription_service._warn_if_devices_diverged for why that
+    # ambiguity matters.
     max_devices: int = Field(default=0, alias='maxDevices')
     # The credential in the public subscription link.
     subscription_token: str | None = Field(

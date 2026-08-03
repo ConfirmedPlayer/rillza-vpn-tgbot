@@ -210,6 +210,15 @@ class SubscriptionService:
         granted are not undone, so there is nothing here worth failing
         the request over — it is a signal for the operator, not a
         failure path.
+
+        For whoever is paged by the resulting ERROR: this cannot tell
+        "the panel ignored our write" from "the panel's response just
+        did not echo the field" — ``PanelUser.max_devices`` defaults to
+        0 when ``maxDevices`` is absent from the body (schemas.py), so
+        both look identical here. Erring toward the false alarm is the
+        right trade for now; to tell them apart, read the raw response
+        for this user (``GET /api/users/{tg_id}``) rather than trusting
+        this log alone.
         """
         if panel_user.max_devices != subscription.max_devices:
             logger.error(
