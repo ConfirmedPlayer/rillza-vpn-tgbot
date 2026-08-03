@@ -646,7 +646,7 @@ class TestDeviceCount:
         )
 
     async def test_an_explicit_downgrade_lowers_the_count(
-        self, payments, provider, uow, seeded_tariffs
+        self, payments, provider, uow, panel, seeded_tariffs
     ) -> None:
         """The guard above must not block a deliberate downgrade."""
         four = await uow.tariffs.get_by_code('m1x4')
@@ -663,3 +663,6 @@ class TestDeviceCount:
         subscription = await uow.subscriptions.get_by_user(USER_ID)
         assert subscription is not None
         assert subscription.max_devices == 2
+        # A count that moved in the row but never reached the panel
+        # would still pass the assertion above.
+        assert panel.users[str(USER_ID)].max_devices == 2
