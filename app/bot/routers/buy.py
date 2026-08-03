@@ -81,7 +81,9 @@ async def handle_tariff(
         ru.BUY_CHOOSE_PROVIDER.format(
             tariff=tariff.title_ru, amount=tariff.price_rubles
         ),
-        keyboards.providers(tariff.id, available, providers.title),
+        keyboards.providers(
+            tariff.id, available, providers.title, tariff.max_devices
+        ),
     )
     await query.answer()
 

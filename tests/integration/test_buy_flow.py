@@ -4,9 +4,11 @@ import pytest
 import pytest_asyncio
 from aiogram import Bot
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.methods import AnswerCallbackQuery
+from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.bot import keyboards
+from app.bot.texts import ru
 from app.core.enums import PaymentStatus
 from app.core.settings import Settings
 from app.integrations.payments import PaymentRegistry
@@ -60,6 +62,24 @@ def alerts(session: RecordingSession) -> list[str]:
     ]
 
 
+def _last_markup(session: RecordingSession) -> InlineKeyboardMarkup | None:
+    markup = None
+    for request in session.requests:
+        if isinstance(request, SendMessage | EditMessageText):
+            markup = request.reply_markup
+    return markup
+
+
+def _button(
+    markup: InlineKeyboardMarkup | None, text: str
+) -> InlineKeyboardButton:
+    for row in markup.inline_keyboard if markup else []:
+        for button in row:
+            if button.text == text:
+                return button
+    raise AssertionError(f'no button with text {text!r} on screen')
+
+
 async def test_buy_asks_for_the_device_count_first(
     dispatcher, bot, session
 ) -> None:
@@ -107,6 +127,22 @@ async def test_the_four_device_grid_keeps_the_same_savings_ladder(
     assert not any('200 ₽' in b for b in buttons)
 
 
+async def test_a_device_count_not_on_sale_is_rejected(
+    dispatcher, bot, session, seeded_tariffs
+) -> None:
+    """Callback data is client-supplied and need not match a button the
+    bot drew. Only 2 and 4 devices are on sale among the seeded
+    tariffs, so 6 must be refused rather than opening a tariff screen
+    nothing sells.
+    """
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}6')
+    )
+
+    assert any(ru.PAYMENT_UNKNOWN in alert for alert in alerts(session))
+    assert edited_texts(session) == []
+
+
 async def test_a_withdrawn_four_device_tariff_cannot_be_bought(
     dispatcher, bot, session, session_factory, seeded_tariffs
 ) -> None:
@@ -135,6 +171,31 @@ async def test_a_withdrawn_four_device_tariff_cannot_be_bought(
     assert not any('320 ₽' in b for b in button_texts(session))
     async with UnitOfWork(session_factory) as uow:
         assert await uow.payments.list_by_user(USER_ID) == []
+
+
+async def test_provider_screen_back_button_returns_to_the_tariff_list(
+    dispatcher, bot, session, seeded_tariffs
+) -> None:
+    """`providers()`'s back button used to always target `BUY` — the
+    tariff list back in the day, but that callback data now opens the
+    device-count screen, so a buyer tapping «Назад» from the provider
+    screen would silently skip a step. It must return to the tariff
+    list for the device count they actually chose.
+    """
+    tariff = next(t for t in seeded_tariffs if t.code == 'm1')  # 2 devices
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.TARIFF_PREFIX}{tariff.id}')
+    )
+    back = _button(_last_markup(session), '↩️ Назад')
+    assert back.callback_data == f'{keyboards.DEVICES_PREFIX}2'
+
+    session.requests.clear()
+    await dispatcher.feed_update(bot, callback_update(back.callback_data))
+
+    # Feeding the back button's own callback data must bring up the
+    # tariff list, not the device-count screen behind it.
+    buttons = button_texts(session)
+    assert '1 месяц — 200 ₽' in buttons
 
 
 async def test_invoice_is_created_and_shown(

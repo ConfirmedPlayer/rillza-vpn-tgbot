@@ -158,14 +158,21 @@ def tariffs(items) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def providers(tariff_id: int, names, titles) -> InlineKeyboardMarkup:
+def providers(
+    tariff_id: int, names, titles, max_devices: int
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for name in names:
         builder.button(
             text=titles(name),
             callback_data=f'{PROVIDER_PREFIX}{tariff_id}:{name}',
         )
-    builder.button(text='↩️ Назад', callback_data=BUY)
+    # Back goes to the tariff list for the device count the buyer
+    # chose, not to the device-count screen — same target the tariff
+    # screen's own back button uses (`tariffs()` above).
+    builder.button(
+        text='↩️ Назад', callback_data=f'{DEVICES_PREFIX}{max_devices}'
+    )
     builder.adjust(1)
     return builder.as_markup()
 
