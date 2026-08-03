@@ -24,7 +24,7 @@
     "deployment": {
       "how": "docker compose up -d --build прямо из этого каталога, сервисы bot / postgres:17-alpine / redis:7-alpine, тома postgres_data и redis_data",
       "db": "postgres, пользователь и база rillza, наружу не проброшена; доступ через docker compose exec postgres psql -U rillza rillza",
-      "migrations": "накатаны до dc026fb20f91 (payment days applied latch) — применяются автоматически в docker-entrypoint.sh при каждом старте",
+      "migrations": "накатаны до a7c93e1d4f20 (device sets and new pricing) — применяются автоматически в docker-entrypoint.sh при каждом старте",
       "image_state": "Образ собран из master (02edaab) 2026-08-03 13:32 UTC, миграции c4e1f7a2b930 и a7c93e1d4f20 накатились при старте. Пересобирается при каждом docker compose up --build.",
       "env_file": ".env заполнен и рабочий, лежит рядом с compose.yaml. В значениях есть inline-комментарии на кириллице — наивный парсер .env на них падает (latin-1 в заголовках HTTP). Читать настройки через get_settings(), а не разбирать файл руками.",
       "fresh_database": "ВАЖНО: том postgres_data создан заново 2026-08-02. Прежняя база жила в песочнице Claude и исчезла вместе с ней. На момент развёртывания было 0 пользователей, 0 подписок, 0 платежей. В панели при этом есть аккаунт 8983956181 (похож на Telegram ID, вероятно выдан ботом раньше) — бот о нём не знает, сверка его только репортит. Если это реальный клиент, доступ ему нужно выдать через админку.",
@@ -33,8 +33,8 @@
     },
     "panel": {
       "url": "https://link.rillza-service.com, живая и боевая; из этого окружения доступна",
-      "group": "Celerity Primary Access, maxDevices = 2 — проверено scripts/check_panel 2026-08-02",
-      "accounts": "7 штук: 6 созданы владельцем вручную (maxDevices = -1, безлимит: Tim, Sasha Rashid, Sasha, kira, admin, Tatyana) + 1 с maxDevices = 0 (наследует группу)",
+      "group": "Celerity Primary Access, maxDevices = 2 — перепроверено scripts/check_panel 2026-08-03",
+      "accounts": "7 штук: 6 созданы владельцем вручную (maxDevices = -1, безлимит: Tim, Sasha Rashid, Sasha, kira, admin, Tatyana) + аккаунт владельца 8983956181 с ЯВНЫМ числом устройств, которое бот пишет сам. С 2026-08-03 «наследовать группу» (0) у наших аккаунтов больше не встречается: бот всегда шлёт явное число, и сверка приводит панель к нему.",
       "nodes": "2 ноды, обе online: «Hysteria 2» (type hysteria) и «Xray TCP» (type xray), обе на link.rillza-service.com, флаг FI",
       "api_key_scopes": "users:read, users:write, stats:read — этого хватает для всего, что делает бот; mcp:enabled нет, поэтому MCP-эндпоинты панели недоступны",
       "rule": "Ломать, менять ноды и трогать чужие аккаунты нельзя. Любое действие, меняющее состояние панели, — только после явного разрешения владельца."
@@ -54,7 +54,7 @@
     {
       "what": "uv run pytest без TEST_DATABASE_URL показывает успех, ничего не проверив",
       "detail": "Интеграционные тесты помечены skipif и молча пропускаются. Вывод при этом зелёный и не содержит слова failed, а пропускается больше половины сюиты — именно та, где живут проверки блокировок, идемпотентности платежей и потоков бота.",
-      "do": "Всегда прогонять с TEST_DATABASE_URL и сверять число: должно быть 255 passed, ноль skipped. Одноразовый Postgres: docker run -d --rm --name pg -e POSTGRES_PASSWORD=test -e POSTGRES_USER=postgres -e POSTGRES_DB=rillza_test -p 5434:5432 postgres:17-alpine"
+      "do": "Всегда прогонять с TEST_DATABASE_URL и сверять число: на 2026-08-03 должно быть 292 passed, ноль skipped. Одноразовый Postgres: docker run -d --rm --name pg -e POSTGRES_PASSWORD=test -e POSTGRES_USER=postgres -e POSTGRES_DB=rillza_test -p 5434:5432 postgres:17-alpine"
     },
     {
       "what": "Регрессионный тест может проходить на сломанном коде",
