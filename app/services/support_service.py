@@ -1,9 +1,13 @@
 """Anonymous support: the user writes, the admins answer invisibly.
 
-Everything is relayed with ``copy_message``, never forwarded. A forward
-carries a "переслано от" header that names the sender, which is exactly
-what the previous bot leaked when the owner answered — the whole point
-of this feature is that the person replying stays unseen.
+An admin's reply is relayed with ``copy_message``, never forwarded. A
+forward carries a "переслано от" header that names the sender, which
+is exactly what the previous bot leaked when the owner answered — the
+whole point of this feature is that the person replying stays unseen.
+The other direction has no such constraint: a user's own message names
+no one by being copied, and a ready-made request the bot composes on
+their behalf (``relay_composed``) has no source message to copy at all,
+so it travels as a plain ``send_message``.
 
 Routing works by reply: each inbound message is copied into the admins'
 chats and the resulting message ids are remembered, so an admin can
