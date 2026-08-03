@@ -13,6 +13,7 @@ In a deployed container:
 
 import asyncio
 import sys
+from collections import Counter
 from urllib.parse import urlsplit
 
 from app.core.settings import get_settings
@@ -35,12 +36,16 @@ SAMPLE_LIMIT = 50
 #: as opposed to "we reached the host and it said no".
 DNS_MARKERS = ('DNS', 'getaddrinfo', 'Name or service not known')
 
-#: Every maxDevices value the bot itself can ever write: 2 and 4 from
-#: the device-count tariffs, and 0 on a row the bot does not manage
-#: yet (a pre-migration subscription, waiting for the reconciler).
-#: -1 is not written by the bot at all — it is how the owner marks the
-#: hand-made unlimited accounts. Anything else was set by neither.
-KNOWN_LIMITS = {-1, 0, 2, 4}
+#: The panel's own reserved meanings: -1 = unlimited, 0 = inherit the
+#: group's limit. Anything below -1 is not a state the panel should
+#: ever report, so that is the only value shape this script fails on.
+#: A positive count is whatever the operator currently sells — the bot
+#: reads those straight from the tariffs table (``buy.py`` calls
+#: ``uow.tariffs.list_device_counts()``), so this script must not
+#: hardcode which positive numbers are "expected": a new N-device
+#: tariff is a migration and nothing else, and should not turn this
+#: check red.
+MIN_VALID_LIMIT = -1
 
 
 def _hint(error: PanelError, host: str) -> str | None:
@@ -133,10 +138,15 @@ async def _check_device_limit(client: CelerityClient, group_name: str) -> int:
     "no limit" while the group is set correctly. Hence both numbers.
 
     An explicit ``maxDevices`` is the normal state for a bot-managed
-    account, not a red flag — the bot sets 2 or 4 on every one it
-    provisions. The real anomaly this can still catch without a
-    database is a value outside what the bot or a hand-made unlimited
-    account would ever write.
+    account, not a red flag — the bot sets a positive count on every
+    one it provisions, and that count comes from the tariffs table, not
+    from anything this script knows in advance. The only anomaly this
+    script can spot without a database is a value the panel's own
+    semantics rule out entirely (below -1). Whether one particular
+    account's number is the *right* one for what its owner paid is a
+    per-account comparison against the database — that is the
+    reconciler's job (``devices_fixed`` in its report), not this
+    script's.
     """
     users, total = await client.iter_users(page=1, limit=SAMPLE_LIMIT)
     if not users:
@@ -169,40 +179,47 @@ async def _check_device_limit(client: CelerityClient, group_name: str) -> int:
         f'{_describe_limit(configured)}'
     )
 
-    explicit = [user for user in users if user.max_devices != 0]
+    seen = Counter(user.max_devices for user in users)
+    breakdown = ', '.join(
+        f'{value}={count}' for value, count in sorted(seen.items())
+    )
     print(
         f'         {len(users)} of {total} account(s) sampled, '
-        f'{len(explicit)} with an explicit maxDevices'
-    )
-    print(
-        '         that is expected, not an anomaly: the bot now sets '
-        'maxDevices\n'
-        '         explicitly (2 or 4) on every account it manages, so '
-        'the group\n'
-        '         limit above is only the fallback — for hand-made '
-        'accounts, and\n'
-        '         for rows from before this changed, until the '
-        'reconciler catches\n'
-        '         up. This script has no database access, so it cannot '
-        'tell\n'
-        "         whether one account's number is what its owner "
-        'actually paid\n'
-        '         for; that comparison runs continuously in the '
-        'reconciler\n'
-        '         (a mismatch shows up as devices_fixed in its report).'
+        f'maxDevices seen: {breakdown}\n'
+        '         An explicit value is expected, not an anomaly: the '
+        'bot sets maxDevices\n'
+        '         on every account it manages from the tariffs table '
+        '(buy.py reads it\n'
+        '         via list_device_counts()), so a new N-device tariff '
+        'is meant to add\n'
+        '         a new number to the line above — this script does '
+        'not keep its own\n'
+        '         list of "expected" counts to compare against. The '
+        'group limit is\n'
+        '         only the fallback, for hand-made accounts and rows '
+        'the reconciler\n'
+        '         has not caught up with yet. This script has no '
+        'database access, so\n'
+        "         it cannot tell whether one account's number is what "
+        'its owner\n'
+        '         actually paid for; that comparison runs continuously '
+        'in the\n'
+        '         reconciler (a mismatch shows up as devices_fixed in '
+        'its report).'
     )
 
-    unexpected = [u for u in users if u.max_devices not in KNOWN_LIMITS]
-    if unexpected:
+    invalid = [u for u in users if u.max_devices < MIN_VALID_LIMIT]
+    if invalid:
         shown = ', '.join(
-            f'{user.user_id}({user.max_devices})' for user in unexpected[:10]
+            f'{user.user_id}({user.max_devices})' for user in invalid[:10]
         )
         print(
-            f'[{FAIL}] devices: {len(unexpected)} account(s) carry a '
-            'maxDevices outside\n'
-            f'         {sorted(KNOWN_LIMITS)} — not a value the bot or a '
-            f'hand-made\n'
-            f'         unlimited account would ever set: {shown}'
+            f'[{FAIL}] devices: {len(invalid)} account(s) carry a '
+            f'maxDevices below {MIN_VALID_LIMIT} —\n'
+            '         not a state the panel should ever be in (-1 = '
+            'unlimited, 0 =\n'
+            f'         inherit the group, otherwise a positive count): '
+            f'{shown}'
         )
         return 1
 
