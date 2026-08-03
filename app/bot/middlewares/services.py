@@ -64,6 +64,7 @@ class ServicesMiddleware(BaseMiddleware):
                     uow, bot, self._settings, subscriptions, self._limiter
                 )
         data['settings'] = self._settings
+        data['limiter'] = self._limiter
         data['panel'] = self._panel
         data['providers'] = self._providers
         data['sync_cooldown'] = self._sync_cooldown

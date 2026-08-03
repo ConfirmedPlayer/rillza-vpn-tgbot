@@ -550,3 +550,73 @@ async def test_an_archived_tariff_cannot_be_bought(
 
     async with UnitOfWork(session_factory) as uow:
         assert await uow.payments.list_by_user(USER_ID) == []
+
+
+class TestPaymentThrottling:
+    """Every tap here costs a request to the payment provider.
+
+    Callback data comes from the client, so nothing stops a script from
+    tapping hundreds of times a second. The provider does not see one
+    rude user — it sees the bot's token misbehaving, and throttles it
+    for everyone.
+    """
+
+    def _dispatcher(self, session_factory, provider):
+        from tests.integration.test_support_flow import DenyingLimiter
+
+        settings = Settings(_env_file=None, **BASE_ENV)  # type: ignore[arg-type]
+        return build_dispatcher(
+            settings,
+            session_factory,
+            FakePanel(),
+            PaymentRegistry({provider.name: provider}),
+            storage=MemoryStorage(),
+            limiter=DenyingLimiter(),
+        )
+
+    async def test_invoices_are_throttled(
+        self, session_factory, seeded_tariffs, provider, bot, session
+    ) -> None:
+        dispatcher = self._dispatcher(session_factory, provider)
+
+        await dispatcher.feed_update(
+            bot,
+            callback_update(
+                f'{keyboards.PROVIDER_PREFIX}{seeded_tariffs[0].id}:yoomoney'
+            ),
+        )
+
+        assert any('Слишком часто' in alert for alert in alerts(session))
+        async with UnitOfWork(session_factory) as uow:
+            assert await uow.payments.list_by_user(USER_ID) == []
+        # Nothing reached the provider either.
+        assert provider.invoices == {}
+
+    async def test_payment_checks_are_throttled(
+        self,
+        dispatcher,
+        bot,
+        session,
+        session_factory,
+        seeded_tariffs,
+        provider,
+    ) -> None:
+        await dispatcher.feed_update(
+            bot,
+            callback_update(
+                f'{keyboards.PROVIDER_PREFIX}{seeded_tariffs[0].id}:yoomoney'
+            ),
+        )
+        async with UnitOfWork(session_factory) as uow:
+            payment = (await uow.payments.list_by_user(USER_ID))[0]
+
+        throttled = self._dispatcher(session_factory, provider)
+        session.requests.clear()
+        provider.checks.clear()
+
+        await throttled.feed_update(
+            bot, callback_update(f'{keyboards.CHECK_PREFIX}{payment.id}')
+        )
+
+        assert any('Слишком часто' in alert for alert in alerts(session))
+        assert provider.checks == []

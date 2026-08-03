@@ -16,8 +16,20 @@ from app.services.payment_service import (
     FinalizeResult,
     PaymentService,
 )
+from app.services.rate_limit import RateLimiter
 from app.services.subscription_service import SubscriptionService, utcnow
 from app.services.uow import UnitOfWork
+
+#: Issuing an invoice is an HTTP call to the payment provider and a row
+#: in the database. Callback data comes from the client, so nothing but
+#: this stops a script from tapping hundreds of times a second — and the
+#: provider does not see one rude user, it sees our token misbehaving
+#: and throttles it for every buyer at once.
+INVOICE_LIMIT = 5
+#: Checking is cheaper but still one provider call per tap, and people
+#: legitimately tap it while waiting for their transfer to land.
+CHECK_LIMIT = 15
+RATE_WINDOW_SECONDS = 60
 
 
 async def handle_buy(
@@ -119,6 +131,7 @@ async def handle_provider(
     uow: UnitOfWork,
     payments: PaymentService,
     settings: Settings,
+    limiter: RateLimiter,
     **_: object,
 ) -> None:
     raw = (query.data or '').removeprefix(keyboards.PROVIDER_PREFIX)
@@ -127,6 +140,15 @@ async def handle_provider(
     tariff = await uow.tariffs.get_sellable(int(tariff_id))
     if tariff is None:
         await query.answer(ru.PAYMENT_UNKNOWN, show_alert=True)
+        return
+
+    # Before the row and before the provider: a refused tap must cost
+    # neither. Background jobs reach PaymentService directly and are
+    # deliberately not gated by this.
+    if not await limiter.allow(
+        f'invoice:{query.from_user.id}', INVOICE_LIMIT, RATE_WINDOW_SECONDS
+    ):
+        await query.answer(ru.PAYMENT_TOO_FAST, show_alert=True)
         return
 
     try:
@@ -174,6 +196,7 @@ async def handle_check(
     query: CallbackQuery,
     payments: PaymentService,
     subscriptions: SubscriptionService,
+    limiter: RateLimiter,
     **_: object,
 ) -> None:
     raw = (query.data or '').removeprefix(keyboards.CHECK_PREFIX)
@@ -181,6 +204,12 @@ async def handle_check(
         payment_id = uuid.UUID(raw)
     except ValueError:
         await query.answer(ru.PAYMENT_UNKNOWN, show_alert=True)
+        return
+
+    if not await limiter.allow(
+        f'check:{query.from_user.id}', CHECK_LIMIT, RATE_WINDOW_SECONDS
+    ):
+        await query.answer(ru.PAYMENT_TOO_FAST, show_alert=True)
         return
 
     result = await payments.check_and_finalize(
