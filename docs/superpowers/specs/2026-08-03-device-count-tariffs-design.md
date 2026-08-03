@@ -202,10 +202,10 @@ buy → devices:N → tariff:<id> → provider:<id>:<name>
 что дни и защёлка:
 
 ```python
-newest = await self._uow.payments.newest_applied_paid_at(
+newest = await self._uow.payments.newest_applied_created_at(
     payment.user_id, exclude=payment.id
 )
-if newest is None or payment.paid_at >= newest:
+if newest is None or payment.created_at >= newest:
     subscription.max_devices = tariff.max_devices
 ```
 
@@ -219,25 +219,30 @@ if newest is None or payment.paid_at >= newest:
 дошли — окно `sweep_late_payments` равно семи дням, — свип поднял
 платёж, и человек, заплативший за четыре устройства, получил два.
 
-Новой колонки для этого не нужно: `payments.paid_at` и
-`payments.days_applied_at` уже есть, а чтение идёт под
-`lock_user` + `lock_by_user`, то есть сериализовано со всеми другими
-писателями этой подписки.
+**Почему `created_at`, а не `paid_at`.** `_mark_paid` ставит `paid_at`
+в момент, когда деньги **заметили**, а не когда их отправили. У
+платежа, поднятого свипом через два дня, `paid_at` окажется позже, чем
+у покупки, сделанной вчера, — сторож на `paid_at` пропустил бы ровно
+тот случай, ради которого написан, и инвертировал бы порядок.
+`created_at` — момент выставления счёта, то есть порядок, в котором
+человек нажимал «купить»; именно он выражает намерение.
 
-`payment.paid_at` на этом шаге гарантированно не `NULL`: `_mark_paid`
-проставляет его условным UPDATE раньше, чем `_provision` вызовет
-`_apply_days`. Сравнение `>=`, а не `>`, — на случай, когда два платежа
-получили одну и ту же секунду.
+Новой колонки не нужно: `payments.created_at` и
+`payments.days_applied_at` уже есть, под запрос уже существует
+`ix_payments_user_id_created_at`, а чтение идёт под `lock_user` +
+`lock_by_user`, то есть сериализовано со всеми другими писателями этой
+подписки. Сравнение `>=`, а не `>`, — на случай двух счетов, попавших
+в одно мгновение.
 
 Новый метод репозитория:
 
 ```python
-async def newest_applied_paid_at(
+async def newest_applied_created_at(
     self, user_id: int, exclude: uuid.UUID
 ) -> datetime | None
 ```
 
-`MAX(paid_at)` по платежам пользователя, у которых
+`MAX(created_at)` по платежам пользователя, у которых
 `days_applied_at IS NOT NULL`, кроме указанного.
 
 ## 8. Готовый запрос в поддержку
