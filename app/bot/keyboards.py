@@ -17,6 +17,7 @@ from app.core.settings import Settings
 
 MENU = 'menu'
 BUY = 'buy'
+DEVICES_PREFIX = 'devices:'
 TARIFF_PREFIX = 'tariff:'
 PROVIDER_PREFIX = 'provider:'
 CHECK_PREFIX = 'check:'
@@ -125,6 +126,19 @@ def back_to_menu() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def devices(counts) -> InlineKeyboardMarkup:
+    """Step one of a purchase: how many devices."""
+    builder = InlineKeyboardBuilder()
+    for count in counts:
+        builder.button(
+            text=f'👥 До {count} устройств',
+            callback_data=f'{DEVICES_PREFIX}{count}',
+        )
+    builder.button(text='↩️ Главное меню', callback_data=MENU)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def tariffs(items) -> InlineKeyboardMarkup:
     """One row per duration, with the per-month price to compare against."""
     builder = InlineKeyboardBuilder()
@@ -139,7 +153,7 @@ def tariffs(items) -> InlineKeyboardMarkup:
             if discount:
                 label += f' (выгода {discount}%)'
         builder.button(text=label, callback_data=f'{TARIFF_PREFIX}{tariff.id}')
-    builder.button(text='↩️ Главное меню', callback_data=MENU)
+    builder.button(text='↩️ Назад', callback_data=BUY)
     builder.adjust(1)
     return builder.as_markup()
 

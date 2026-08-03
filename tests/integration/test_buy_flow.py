@@ -60,10 +60,24 @@ def alerts(session: RecordingSession) -> list[str]:
     ]
 
 
-async def test_tariff_grid_shows_prices_and_savings(
+async def test_buy_asks_for_the_device_count_first(
     dispatcher, bot, session
 ) -> None:
     await dispatcher.feed_update(bot, callback_update(keyboards.BUY))
+
+    buttons = button_texts(session)
+    assert any('2 устройств' in b for b in buttons)
+    assert any('4 устройств' in b for b in buttons)
+    # The durations are one tap away, not on this screen.
+    assert not any('месяц' in b for b in buttons)
+
+
+async def test_tariff_grid_shows_prices_and_savings(
+    dispatcher, bot, session
+) -> None:
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}2')
+    )
 
     buttons = button_texts(session)
     # The shortest plan is the reference and carries no badge; longer
@@ -72,6 +86,55 @@ async def test_tariff_grid_shows_prices_and_savings(
     assert '3 месяца — 540 ₽ (выгода 10%)' in buttons
     assert '6 месяцев — 960 ₽ (выгода 20%)' in buttons
     assert any(b.startswith('12 месяцев — 1680 ₽ (выгода 3') for b in buttons)
+
+
+async def test_the_four_device_grid_keeps_the_same_savings_ladder(
+    dispatcher, bot, session
+) -> None:
+    """A flat multiplier is what makes the badges match between sets.
+
+    A mixed list would compare a two-device month against a
+    four-device one and print a nonsense discount.
+    """
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}4')
+    )
+
+    buttons = button_texts(session)
+    assert '1 месяц — 320 ₽' in buttons
+    assert '3 месяца — 864 ₽ (выгода 10%)' in buttons
+    assert '6 месяцев — 1536 ₽ (выгода 20%)' in buttons
+    assert not any('200 ₽' in b for b in buttons)
+
+
+async def test_a_withdrawn_four_device_tariff_cannot_be_bought(
+    dispatcher, bot, session, session_factory, seeded_tariffs
+) -> None:
+    """The device screen must not become a second way in.
+
+    Callback data is client-supplied, so taking m1x4 off sale has to
+    stop sales of it on both steps, not just hide the button.
+    """
+    tariff = next(t for t in seeded_tariffs if t.code == 'm1x4')
+    async with UnitOfWork(session_factory) as uow:
+        await uow.tariffs.set_active(tariff.id, False)
+        await uow.commit()
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}4')
+    )
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.TARIFF_PREFIX}{tariff.id}')
+    )
+    await dispatcher.feed_update(
+        bot,
+        callback_update(f'{keyboards.PROVIDER_PREFIX}{tariff.id}:yoomoney'),
+    )
+
+    assert not any('320 ₽' in b for b in button_texts(session))
+    async with UnitOfWork(session_factory) as uow:
+        assert await uow.payments.list_by_user(USER_ID) == []
 
 
 async def test_invoice_is_created_and_shown(

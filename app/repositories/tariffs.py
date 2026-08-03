@@ -49,12 +49,37 @@ class TariffsRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_active(self) -> Sequence[Tariff]:
-        """What the purchase screen shows, cheapest period first."""
+    async def list_active(self, max_devices: int) -> Sequence[Tariff]:
+        """What one purchase screen shows, cheapest period first.
+
+        ``max_devices`` is required rather than optional: the savings
+        badge is computed against the most expensive month in the list
+        shown, so a mixed list would tell a two-device buyer their
+        month is 38% cheaper than a four-device one.
+        """
         result = await self._session.execute(
             select(Tariff)
-            .where(Tariff.is_active.is_(True), Tariff.is_archived.is_(False))
+            .where(
+                Tariff.is_active.is_(True),
+                Tariff.is_archived.is_(False),
+                Tariff.max_devices == max_devices,
+            )
             .order_by(Tariff.sort_order, Tariff.duration_days)
+        )
+        return result.scalars().all()
+
+    async def list_device_counts(self) -> Sequence[int]:
+        """Device counts that have something on sale, ascending.
+
+        Read from the table rather than hardcoded, so pausing every
+        four-device plan from the admin screen removes the button, and
+        adding a six-device set later is a migration and nothing else.
+        """
+        result = await self._session.execute(
+            select(Tariff.max_devices)
+            .where(Tariff.is_active.is_(True), Tariff.is_archived.is_(False))
+            .distinct()
+            .order_by(Tariff.max_devices)
         )
         return result.scalars().all()
 

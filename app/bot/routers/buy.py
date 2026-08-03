@@ -23,8 +23,38 @@ from app.services.uow import UnitOfWork
 async def handle_buy(
     query: CallbackQuery, uow: UnitOfWork, **_: object
 ) -> None:
-    tariffs = await uow.tariffs.list_active()
-    await _edit(query, ru.BUY_CHOOSE_TARIFF, keyboards.tariffs(tariffs))
+    counts = await uow.tariffs.list_device_counts()
+    if not counts:
+        await _edit(query, ru.BUY_NO_PROVIDERS, keyboards.back_to_menu())
+        await query.answer()
+        return
+    await _edit(query, ru.BUY_CHOOSE_DEVICES, keyboards.devices(counts))
+    await query.answer()
+
+
+async def handle_devices(
+    query: CallbackQuery, uow: UnitOfWork, **_: object
+) -> None:
+    raw = (query.data or '').removeprefix(keyboards.DEVICES_PREFIX)
+    count_raw, _, _flag = raw.partition(':')
+    try:
+        count = int(count_raw)
+    except ValueError:
+        await query.answer(ru.PAYMENT_UNKNOWN, show_alert=True)
+        return
+
+    # Callback data is client-supplied and need not match a button the
+    # bot drew, so the number is checked against what is on sale.
+    if count not in await uow.tariffs.list_device_counts():
+        await query.answer(ru.PAYMENT_UNKNOWN, show_alert=True)
+        return
+
+    tariffs = await uow.tariffs.list_active(count)
+    await _edit(
+        query,
+        ru.BUY_CHOOSE_TARIFF.format(devices=count),
+        keyboards.tariffs(tariffs),
+    )
     await query.answer()
 
 
@@ -159,6 +189,9 @@ def build_router() -> Router:
     router.message.filter(F.chat.type == ChatType.PRIVATE)
 
     router.callback_query.register(handle_buy, F.data == keyboards.BUY)
+    router.callback_query.register(
+        handle_devices, F.data.startswith(keyboards.DEVICES_PREFIX)
+    )
     router.callback_query.register(
         handle_tariff, F.data.startswith(keyboards.TARIFF_PREFIX)
     )

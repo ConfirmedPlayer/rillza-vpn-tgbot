@@ -594,6 +594,9 @@ class TestTariffEditing:
 
         session.requests.clear()
         await dispatcher.feed_update(bot, callback_update(keyboards.BUY))
+        await dispatcher.feed_update(
+            bot, callback_update(f'{keyboards.DEVICES_PREFIX}2')
+        )
         from tests.integration.test_trial_flow import button_texts
 
         assert any('249' in text for text in button_texts(session))
@@ -621,9 +624,18 @@ class TestTariffEditing:
     async def test_a_disabled_tariff_leaves_the_shop(
         self, dispatcher, bot, session, session_factory, seeded_tariffs
     ) -> None:
+        """The device-count screen carries no tariff titles at all, so
+        checking ``tariff.title_ru not in buttons`` there would pass no
+        matter what — asserting nothing. Navigate one tap further, into
+        the two-device tariff list, and check the full button label
+        (title *and* price): the four-device m1x4 shares m1's title_ru
+        ('1 месяц'), so the title alone cannot tell a withdrawn m1 from
+        a still-selling m1x4.
+        """
         from tests.integration.test_trial_flow import button_texts
 
-        tariff = seeded_tariffs[0]
+        tariff = seeded_tariffs[0]  # m1: 2 devices, 1 month, 200 ₽
+        withdrawn_label = f'{tariff.title_ru} — {tariff.price_kopeks // 100} ₽'
 
         await dispatcher.feed_update(
             bot,
@@ -638,10 +650,16 @@ class TestTariffEditing:
             assert stored.is_active is False
 
         session.requests.clear()
-        await dispatcher.feed_update(bot, callback_update(keyboards.BUY))
-        assert not any(
-            tariff.title_ru in text for text in button_texts(session)
+        await dispatcher.feed_update(
+            bot, callback_update(f'{keyboards.DEVICES_PREFIX}2')
         )
+
+        buttons = button_texts(session)
+        assert withdrawn_label not in buttons
+        # The other two-device tariffs are still on sale.
+        assert any(b.startswith('3 месяца —') for b in buttons)
+        assert any(b.startswith('6 месяцев —') for b in buttons)
+        assert any(b.startswith('12 месяцев —') for b in buttons)
 
 
 class TestGrantSurvivesAPanelOutage:

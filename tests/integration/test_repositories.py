@@ -128,23 +128,19 @@ class TestTariffs:
     async def test_seed_matches_agreed_prices(
         self, uow: UnitOfWork, seeded_tariffs
     ) -> None:
-        tariffs = await uow.tariffs.list_active()
+        tariffs = await uow.tariffs.list_active(2)
 
         assert [(t.code, t.price_kopeks) for t in tariffs] == [
             ('m1', 20_000),
             ('m3', 54_000),
             ('m6', 96_000),
             ('m12', 168_000),
-            ('m1x4', 32_000),
-            ('m3x4', 86_400),
-            ('m6x4', 153_600),
-            ('m12x4', 268_800),
         ]
 
     async def test_monthly_price_shows_the_discount(
         self, uow: UnitOfWork, seeded_tariffs
     ) -> None:
-        by_code = {t.code: t for t in await uow.tariffs.list_active()}
+        by_code = {t.code: t for t in await uow.tariffs.list_active(2)}
 
         assert by_code['m1'].monthly_price_kopeks == 20_000
         assert by_code['m3'].monthly_price_kopeks == 18_000
@@ -159,11 +155,21 @@ class TestTariffs:
         tariffs['m6'].is_archived = True
         await uow.commit()
 
-        active = [t.code for t in await uow.tariffs.list_active()]
+        active = [t.code for t in await uow.tariffs.list_active(2)]
         listed = [t.code for t in await uow.tariffs.list_all()]
 
-        assert active == ['m1', 'm12', 'm1x4', 'm3x4', 'm6x4', 'm12x4']
+        assert active == ['m1', 'm12']
         assert 'm6' not in listed
+
+    async def test_list_active_filters_by_device_count(
+        self, uow: UnitOfWork, seeded_tariffs
+    ) -> None:
+        two = {t.code for t in await uow.tariffs.list_active(2)}
+        four = {t.code for t in await uow.tariffs.list_active(4)}
+
+        assert two == {'m1', 'm3', 'm6', 'm12'}
+        assert four == {'m1x4', 'm3x4', 'm6x4', 'm12x4'}
+        assert await uow.tariffs.list_device_counts() == [2, 4]
 
     async def test_code_is_unique(
         self, uow: UnitOfWork, seeded_tariffs
