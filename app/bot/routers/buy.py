@@ -16,7 +16,7 @@ from app.services.payment_service import (
     FinalizeResult,
     PaymentService,
 )
-from app.services.subscription_service import SubscriptionService
+from app.services.subscription_service import SubscriptionService, utcnow
 from app.services.uow import UnitOfWork
 
 
@@ -47,6 +47,30 @@ async def handle_devices(
     # bot drew, so the number is checked against what is on sale.
     if count not in await uow.tariffs.list_device_counts():
         await query.answer(ru.PAYMENT_UNKNOWN, show_alert=True)
+        return
+
+    confirmed = _flag == 'ok'
+    subscription = await uow.subscriptions.get_by_user(query.from_user.id)
+    now = utcnow()
+    if (
+        not confirmed
+        and subscription is not None
+        and subscription.is_active_at(now)
+        and subscription.max_devices > count
+    ):
+        # is_active_at, not status == ACTIVE: an expired subscription
+        # has nothing left to lose, so there is nothing to warn about.
+        await _edit(
+            query,
+            ru.BUY_DOWNGRADE_WARNING.format(
+                current=subscription.max_devices,
+                chosen=count,
+                until=ru.format_date(subscription.expires_at),
+                left=ru.format_left(subscription.expires_at, now),
+            ),
+            keyboards.devices_downgrade(count, subscription.max_devices),
+        )
+        await query.answer()
         return
 
     tariffs = await uow.tariffs.list_active(count)

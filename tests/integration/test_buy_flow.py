@@ -390,6 +390,80 @@ async def test_a_withdrawn_tariff_cannot_be_bought(
         assert await uow.payments.list_by_user(USER_ID) == []
 
 
+async def test_a_downgrade_is_warned_about_before_the_tariffs(
+    dispatcher, bot, session, session_factory, seeded_tariffs, provider
+) -> None:
+    """Days add up, the device count does not: the remaining paid days
+    drop to the new number too, and the buyer is told so."""
+    four = next(t for t in seeded_tariffs if t.code == 'm1x4')
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.PROVIDER_PREFIX}{four.id}:yoomoney')
+    )
+    async with UnitOfWork(session_factory) as uow:
+        payment = (await uow.payments.list_by_user(USER_ID))[0]
+    provider.mark_paid(payment.id)
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.CHECK_PREFIX}{payment.id}')
+    )
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}2')
+    )
+
+    text = edited_texts(session)[-1]
+    assert 'до 4 устройств' in text
+    buttons = button_texts(session)
+    assert any('Всё равно продолжить' in b for b in buttons)
+    # The tariff list is not on this screen yet.
+    assert not any('200 ₽' in b for b in buttons)
+
+
+async def test_a_confirmed_downgrade_reaches_the_tariffs(
+    dispatcher, bot, session, session_factory, seeded_tariffs, provider
+) -> None:
+    four = next(t for t in seeded_tariffs if t.code == 'm1x4')
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.PROVIDER_PREFIX}{four.id}:yoomoney')
+    )
+    async with UnitOfWork(session_factory) as uow:
+        payment = (await uow.payments.list_by_user(USER_ID))[0]
+    provider.mark_paid(payment.id)
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.CHECK_PREFIX}{payment.id}')
+    )
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}2:ok')
+    )
+
+    assert '1 месяц — 200 ₽' in button_texts(session)
+
+
+async def test_an_upgrade_is_not_warned_about(
+    dispatcher, bot, session, session_factory, seeded_tariffs, provider
+) -> None:
+    """Only losing devices needs a warning; buying more never does."""
+    two = next(t for t in seeded_tariffs if t.code == 'm1')
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.PROVIDER_PREFIX}{two.id}:yoomoney')
+    )
+    async with UnitOfWork(session_factory) as uow:
+        payment = (await uow.payments.list_by_user(USER_ID))[0]
+    provider.mark_paid(payment.id)
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.CHECK_PREFIX}{payment.id}')
+    )
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}4')
+    )
+
+    assert '1 месяц — 320 ₽' in button_texts(session)
+
+
 async def test_an_archived_tariff_cannot_be_bought(
     dispatcher, bot, session, session_factory, seeded_tariffs
 ) -> None:

@@ -139,6 +139,22 @@ def devices(counts) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def devices_downgrade(chosen: int, current: int) -> InlineKeyboardMarkup:
+    """Offered before a purchase that lowers the device count."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text='✅ Всё равно продолжить',
+        callback_data=f'{DEVICES_PREFIX}{chosen}:ok',
+    )
+    builder.button(
+        text=f'👥 Смотреть тарифы до {current} устройств',
+        callback_data=f'{DEVICES_PREFIX}{current}',
+    )
+    builder.button(text='↩️ Назад', callback_data=BUY)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def tariffs(items) -> InlineKeyboardMarkup:
     """One row per duration, with the per-month price to compare against."""
     builder = InlineKeyboardBuilder()
