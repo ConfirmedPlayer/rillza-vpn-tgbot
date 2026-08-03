@@ -73,7 +73,13 @@ SUBSCRIPTION_PENDING = (
     'Оплата уже учтена, повторять не нужно.'
 )
 SUBSCRIPTION_TRAFFIC = '\nИзрасходовано: <b>{used}</b> (трафик не ограничен)'
+#: Active screen only: the subscription is live, so present tense is
+#: accurate here.
 SUBSCRIPTION_DEVICES = '\nРаботает до {devices} устройств'
+#: Expired and pending screens: neutral tense. "Работает" would be a
+#: lie on both — one is already over, the other is not delivered yet —
+#: this states what was bought without claiming it works right now.
+SUBSCRIPTION_DEVICES_PLAN = '\nТариф: до {devices} устройств'
 SUBSCRIPTION_HINT = (
     '\n\nНажмите «🔗 Открыть подписку» и на открывшейся странице — '
     'кнопку <b>HAPP</b>. Приложение настроится само.'

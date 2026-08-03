@@ -31,19 +31,26 @@ def render_subscription(view, now) -> str:
     until = ru.format_date(subscription.expires_at)
 
     devices = ru.SUBSCRIPTION_DEVICES.format(devices=subscription.max_devices)
+    devices_plan = ru.SUBSCRIPTION_DEVICES_PLAN.format(
+        devices=subscription.max_devices
+    )
 
     if subscription.status == SubscriptionStatus.REVOKED:
         return ru.SUBSCRIPTION_REVOKED
     if subscription.status == SubscriptionStatus.PENDING:
         # Recorded but not yet delivered: saying "истекла" here would be
         # a lie, and the date shown would be in the future. Still worth
-        # naming the device count: it is already decided, just not
-        # delivered yet.
-        return ru.SUBSCRIPTION_PENDING + devices
+        # naming the device count — it is already decided, just not
+        # delivered yet — but not in present tense: it does not work
+        # yet, so SUBSCRIPTION_DEVICES ("Работает...") would contradict
+        # the line above it.
+        return ru.SUBSCRIPTION_PENDING + devices_plan
     if not subscription.is_active_at(now):
         # An expired customer deciding whether to renew is not told
-        # what they had unless this line says so too.
-        return ru.SUBSCRIPTION_EXPIRED.format(until=until) + devices
+        # what they had unless this line says so too — again in
+        # neutral tense, since "Работает" would contradict "закончился"
+        # right above it.
+        return ru.SUBSCRIPTION_EXPIRED.format(until=until) + devices_plan
 
     text = ru.SUBSCRIPTION_ACTIVE.format(
         until=until, left=ru.format_left(subscription.expires_at, now)
