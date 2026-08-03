@@ -675,9 +675,10 @@ class TestTariffEditing:
         checking ``tariff.title_ru not in buttons`` there would pass no
         matter what — asserting nothing. Navigate one tap further, into
         the two-device tariff list, and check the full button label
-        (title *and* price): the four-device m1x4 shares m1's title_ru
-        ('1 месяц'), so the title alone cannot tell a withdrawn m1 from
-        a still-selling m1x4.
+        (title *and* price): the button text is always "title — price
+        ₽", never the bare title, so a check against the title alone
+        would never find a match regardless of which tariffs are on
+        sale.
         """
         from tests.integration.test_trial_flow import button_texts
 
@@ -704,9 +705,15 @@ class TestTariffEditing:
         buttons = button_texts(session)
         assert withdrawn_label not in buttons
         # The other two-device tariffs are still on sale.
-        assert any(b.startswith('3 месяца —') for b in buttons)
-        assert any(b.startswith('6 месяцев —') for b in buttons)
-        assert any(b.startswith('12 месяцев —') for b in buttons)
+        assert any(
+            b.startswith('3 месяца · до 2 устройств —') for b in buttons
+        )
+        assert any(
+            b.startswith('6 месяцев · до 2 устройств —') for b in buttons
+        )
+        assert any(
+            b.startswith('12 месяцев · до 2 устройств —') for b in buttons
+        )
 
 
 class TestGrantSurvivesAPanelOutage:
