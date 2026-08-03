@@ -1,5 +1,7 @@
 """The purchase flow as the user walks it."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 import pytest_asyncio
 from aiogram import Bot
@@ -102,10 +104,13 @@ async def test_tariff_grid_shows_prices_and_savings(
     buttons = button_texts(session)
     # The shortest plan is the reference and carries no badge; longer
     # ones advertise how much cheaper their month is against it.
-    assert '1 месяц — 200 ₽' in buttons
-    assert '3 месяца — 540 ₽ (выгода 10%)' in buttons
-    assert '6 месяцев — 960 ₽ (выгода 20%)' in buttons
-    assert any(b.startswith('12 месяцев — 1680 ₽ (выгода 3') for b in buttons)
+    assert '1 месяц · до 2 устройств — 200 ₽' in buttons
+    assert '3 месяца · до 2 устройств — 540 ₽ (выгода 10%)' in buttons
+    assert '6 месяцев · до 2 устройств — 960 ₽ (выгода 20%)' in buttons
+    assert any(
+        b.startswith('12 месяцев · до 2 устройств — 1680 ₽ (выгода 3')
+        for b in buttons
+    )
 
 
 async def test_the_four_device_grid_keeps_the_same_savings_ladder(
@@ -121,9 +126,9 @@ async def test_the_four_device_grid_keeps_the_same_savings_ladder(
     )
 
     buttons = button_texts(session)
-    assert '1 месяц — 320 ₽' in buttons
-    assert '3 месяца — 864 ₽ (выгода 10%)' in buttons
-    assert '6 месяцев — 1536 ₽ (выгода 20%)' in buttons
+    assert '1 месяц · до 4 устройств — 320 ₽' in buttons
+    assert '3 месяца · до 4 устройств — 864 ₽ (выгода 10%)' in buttons
+    assert '6 месяцев · до 4 устройств — 1536 ₽ (выгода 20%)' in buttons
     assert not any('200 ₽' in b for b in buttons)
 
 
@@ -195,7 +200,7 @@ async def test_provider_screen_back_button_returns_to_the_tariff_list(
     # Feeding the back button's own callback data must bring up the
     # tariff list, not the device-count screen behind it.
     buttons = button_texts(session)
-    assert '1 месяц — 200 ₽' in buttons
+    assert '1 месяц · до 2 устройств — 200 ₽' in buttons
 
 
 async def test_invoice_is_created_and_shown(
@@ -460,7 +465,7 @@ async def test_a_confirmed_downgrade_reaches_the_tariffs(
         bot, callback_update(f'{keyboards.DEVICES_PREFIX}2:ok')
     )
 
-    assert '1 месяц — 200 ₽' in button_texts(session)
+    assert '1 месяц · до 2 устройств — 200 ₽' in button_texts(session)
 
 
 async def test_an_upgrade_is_not_warned_about(
@@ -483,7 +488,48 @@ async def test_an_upgrade_is_not_warned_about(
         bot, callback_update(f'{keyboards.DEVICES_PREFIX}4')
     )
 
-    assert '1 месяц — 320 ₽' in button_texts(session)
+    assert '1 месяц · до 4 устройств — 320 ₽' in button_texts(session)
+
+
+async def test_an_expired_but_still_active_row_gets_no_warning(
+    dispatcher, bot, session, session_factory, seeded_tariffs
+) -> None:
+    """The warning gates on ``is_active_at``, not ``status == ACTIVE``.
+
+    A subscription can sit with status ACTIVE and a past ``expires_at``
+    between purchases — expiry_sync runs on its own schedule, not on
+    every read — and such a row has nothing left to lose. Warning it
+    away from a downgrade would be wrong.
+    """
+    import uuid
+
+    from app.core.enums import SubscriptionOrigin, SubscriptionStatus
+    from app.db.models import Subscription
+
+    async with UnitOfWork(session_factory) as uow:
+        await uow.users.upsert(USER_ID)
+        uow.session.add(
+            Subscription(
+                id=uuid.uuid4(),
+                user_id=USER_ID,
+                status=SubscriptionStatus.ACTIVE,
+                origin=SubscriptionOrigin.PURCHASE,
+                expires_at=datetime.now(UTC) - timedelta(days=1),
+                max_devices=4,
+                panel_user_id=str(USER_ID),
+            )
+        )
+        await uow.commit()
+    session.requests.clear()
+
+    await dispatcher.feed_update(
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}2')
+    )
+
+    text = edited_texts(session)[-1]
+    assert 'Станет меньше устройств' not in text
+    buttons = button_texts(session)
+    assert '1 месяц · до 2 устройств — 200 ₽' in buttons
 
 
 async def test_an_archived_tariff_cannot_be_bought(
