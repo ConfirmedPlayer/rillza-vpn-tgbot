@@ -131,10 +131,10 @@ class TestTariffs:
         tariffs = await uow.tariffs.list_active(2)
 
         assert [(t.code, t.price_kopeks) for t in tariffs] == [
-            ('m1', 20_000),
-            ('m3', 54_000),
-            ('m6', 96_000),
-            ('m12', 168_000),
+            ('m1', 10_000),
+            ('m3', 27_000),
+            ('m6', 48_000),
+            ('m12', 84_000),
         ]
 
     async def test_monthly_price_shows_the_discount(
@@ -142,10 +142,10 @@ class TestTariffs:
     ) -> None:
         by_code = {t.code: t for t in await uow.tariffs.list_active(2)}
 
-        assert by_code['m1'].monthly_price_kopeks == 20_000
-        assert by_code['m3'].monthly_price_kopeks == 18_000
-        assert by_code['m6'].monthly_price_kopeks == 16_000
-        assert by_code['m1'].price_rubles == 200
+        assert by_code['m1'].monthly_price_kopeks == 10_000
+        assert by_code['m3'].monthly_price_kopeks == 9_000
+        assert by_code['m6'].monthly_price_kopeks == 8_000
+        assert by_code['m1'].price_rubles == 100
 
     async def test_inactive_and_archived_are_hidden(
         self, uow: UnitOfWork, seeded_tariffs
@@ -165,11 +165,13 @@ class TestTariffs:
         self, uow: UnitOfWork, seeded_tariffs
     ) -> None:
         two = {t.code for t in await uow.tariffs.list_active(2)}
+        three = {t.code for t in await uow.tariffs.list_active(3)}
         four = {t.code for t in await uow.tariffs.list_active(4)}
 
         assert two == {'m1', 'm3', 'm6', 'm12'}
+        assert three == {'m1x3', 'm3x3', 'm6x3', 'm12x3'}
         assert four == {'m1x4', 'm3x4', 'm6x4', 'm12x4'}
-        assert await uow.tariffs.list_device_counts() == [2, 4]
+        assert await uow.tariffs.list_device_counts() == [2, 3, 4, 6, 8]
 
     async def test_code_is_unique(
         self, uow: UnitOfWork, seeded_tariffs
@@ -427,4 +429,4 @@ async def test_seeded_tariffs_carry_a_device_count(
     assert two.max_devices == 2
     assert four.max_devices == 4
     assert four.duration_days == two.duration_days
-    assert four.price_kopeks == 32_000
+    assert four.price_kopeks == 20_000

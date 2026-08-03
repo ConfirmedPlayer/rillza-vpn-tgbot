@@ -104,11 +104,11 @@ async def test_tariff_grid_shows_prices_and_savings(
     buttons = button_texts(session)
     # The shortest plan is the reference and carries no badge; longer
     # ones advertise how much cheaper their month is against it.
-    assert '1 месяц · до 2 устройств — 200 ₽' in buttons
-    assert '3 месяца · до 2 устройств — 540 ₽ (выгода 10%)' in buttons
-    assert '6 месяцев · до 2 устройств — 960 ₽ (выгода 20%)' in buttons
+    assert '1 месяц · до 2 устройств — 100 ₽' in buttons
+    assert '3 месяца · до 2 устройств — 270 ₽ (выгода 10%)' in buttons
+    assert '6 месяцев · до 2 устройств — 480 ₽ (выгода 20%)' in buttons
     assert any(
-        b.startswith('12 месяцев · до 2 устройств — 1680 ₽ (выгода 3')
+        b.startswith('12 месяцев · до 2 устройств — 840 ₽ (выгода 3')
         for b in buttons
     )
 
@@ -126,22 +126,21 @@ async def test_the_four_device_grid_keeps_the_same_savings_ladder(
     )
 
     buttons = button_texts(session)
-    assert '1 месяц · до 4 устройств — 320 ₽' in buttons
-    assert '3 месяца · до 4 устройств — 864 ₽ (выгода 10%)' in buttons
-    assert '6 месяцев · до 4 устройств — 1536 ₽ (выгода 20%)' in buttons
-    assert not any('200 ₽' in b for b in buttons)
+    assert '1 месяц · до 4 устройств — 200 ₽' in buttons
+    assert '3 месяца · до 4 устройств — 540 ₽ (выгода 10%)' in buttons
+    assert '6 месяцев · до 4 устройств — 960 ₽ (выгода 20%)' in buttons
+    assert not any('— 100 ₽' in b for b in buttons)
 
 
 async def test_a_device_count_not_on_sale_is_rejected(
     dispatcher, bot, session, seeded_tariffs
 ) -> None:
     """Callback data is client-supplied and need not match a button the
-    bot drew. Only 2 and 4 devices are on sale among the seeded
-    tariffs, so 6 must be refused rather than opening a tariff screen
-    nothing sells.
+    bot drew. The seeded sets are 2, 3, 4, 6 and 8, so 5 must be
+    refused rather than opening a tariff screen nothing sells.
     """
     await dispatcher.feed_update(
-        bot, callback_update(f'{keyboards.DEVICES_PREFIX}6')
+        bot, callback_update(f'{keyboards.DEVICES_PREFIX}5')
     )
 
     assert any(ru.PAYMENT_UNKNOWN in alert for alert in alerts(session))
@@ -173,7 +172,7 @@ async def test_a_withdrawn_four_device_tariff_cannot_be_bought(
         callback_update(f'{keyboards.PROVIDER_PREFIX}{tariff.id}:yoomoney'),
     )
 
-    assert not any('320 ₽' in b for b in button_texts(session))
+    assert not any('— 200 ₽' in b for b in button_texts(session))
     async with UnitOfWork(session_factory) as uow:
         assert await uow.payments.list_by_user(USER_ID) == []
 
@@ -200,7 +199,7 @@ async def test_provider_screen_back_button_returns_to_the_tariff_list(
     # Feeding the back button's own callback data must bring up the
     # tariff list, not the device-count screen behind it.
     buttons = button_texts(session)
-    assert '1 месяц · до 2 устройств — 200 ₽' in buttons
+    assert '1 месяц · до 2 устройств — 100 ₽' in buttons
 
 
 async def test_invoice_is_created_and_shown(
@@ -213,8 +212,8 @@ async def test_invoice_is_created_and_shown(
     )
 
     text = edited_texts(session)[-1]
-    assert 'Счёт на 200 ₽' in text
-    assert any('Оплатить 200 ₽' in b for b in button_texts(session))
+    assert 'Счёт на 100 ₽' in text
+    assert any('Оплатить 100 ₽' in b for b in button_texts(session))
 
     async with UnitOfWork(session_factory) as uow:
         payments = await uow.payments.list_by_user(USER_ID)
@@ -443,7 +442,7 @@ async def test_a_downgrade_is_warned_about_before_the_tariffs(
     buttons = button_texts(session)
     assert any('Всё равно продолжить' in b for b in buttons)
     # The tariff list is not on this screen yet.
-    assert not any('200 ₽' in b for b in buttons)
+    assert not any('— 100 ₽' in b for b in buttons)
 
 
 async def test_a_confirmed_downgrade_reaches_the_tariffs(
@@ -465,7 +464,7 @@ async def test_a_confirmed_downgrade_reaches_the_tariffs(
         bot, callback_update(f'{keyboards.DEVICES_PREFIX}2:ok')
     )
 
-    assert '1 месяц · до 2 устройств — 200 ₽' in button_texts(session)
+    assert '1 месяц · до 2 устройств — 100 ₽' in button_texts(session)
 
 
 async def test_an_upgrade_is_not_warned_about(
@@ -488,7 +487,7 @@ async def test_an_upgrade_is_not_warned_about(
         bot, callback_update(f'{keyboards.DEVICES_PREFIX}4')
     )
 
-    assert '1 месяц · до 4 устройств — 320 ₽' in button_texts(session)
+    assert '1 месяц · до 4 устройств — 200 ₽' in button_texts(session)
 
 
 async def test_an_expired_but_still_active_row_gets_no_warning(
@@ -529,7 +528,7 @@ async def test_an_expired_but_still_active_row_gets_no_warning(
     text = edited_texts(session)[-1]
     assert 'Станет меньше устройств' not in text
     buttons = button_texts(session)
-    assert '1 месяц · до 2 устройств — 200 ₽' in buttons
+    assert '1 месяц · до 2 устройств — 100 ₽' in buttons
 
 
 async def test_an_archived_tariff_cannot_be_bought(

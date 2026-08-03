@@ -44,28 +44,39 @@ def _load_migration(filename: str):
 
 
 def test_seed_tariffs_fixture_matches_the_migrations():
+    """Replay every tariff migration in order and diff the result.
+
+    Each migration is applied to a dict keyed by code, exactly as the
+    real ones apply to rows, so a later one that renames or reprices an
+    earlier one's row is accounted for rather than assumed away.
+    """
     seed_migration = _load_migration('9f9809a15a9c_seed_tariffs.py')
     device_migration = _load_migration('c4e1f7a2b930_tariff_device_count.py')
+    pricing_migration = _load_migration(
+        'a7c93e1d4f20_device_sets_and_new_pricing.py'
+    )
 
-    # c4e1f7a2b930 renames the two-device titles in place; the new
-    # title is what a fresh database ends up with.
-    renamed_title = {
-        code: new for code, _old, new in device_migration.TWO_DEVICE_TITLES
+    # 9f9809a15a9c: the original four, before the column existed.
+    expected = {
+        code: (title, days, price, 2)
+        for code, title, days, price, _order in seed_migration.TARIFFS
     }
-    expected_two_device = {
-        (code, renamed_title[code], days, price, 2)
-        for code, _old_title, days, price, _order in seed_migration.TARIFFS
-    }
-    expected_four_device = {
-        (code, title, days, price, devices)
-        for code, title, days, price, devices, _order in (
-            device_migration.TARIFFS
-        )
-    }
-    expected = expected_two_device | expected_four_device
+    # c4e1f7a2b930: adds the four-device set, renames the two-device
+    # titles in place.
+    for code, title, days, price, devices, _order in device_migration.TARIFFS:
+        expected[code] = (title, days, price, devices)
+    for code, _old, new in device_migration.TWO_DEVICE_TITLES:
+        _title, days, price, devices = expected[code]
+        expected[code] = (new, days, price, devices)
+    # a7c93e1d4f20: adds three, six and eight, reprices the rest.
+    for code, title, days, price, devices, _order in pricing_migration.TARIFFS:
+        expected[code] = (title, days, price, devices)
+    for code, _old_price, new_price, _old, _new in pricing_migration.REPRICED:
+        title, days, _price, devices = expected[code]
+        expected[code] = (title, days, new_price, devices)
 
     actual = {
-        (code, title, days, price, devices)
+        code: (title, days, price, devices)
         for code, title, days, price, devices, _order in SEED_TARIFFS
     }
 

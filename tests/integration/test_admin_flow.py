@@ -682,7 +682,7 @@ class TestTariffEditing:
         """
         from tests.integration.test_trial_flow import button_texts
 
-        tariff = seeded_tariffs[0]  # m1: 2 devices, 1 month, 200 ₽
+        tariff = seeded_tariffs[0]  # m1: 2 devices, 1 month, 100 ₽
         withdrawn_label = f'{tariff.title_ru} — {tariff.price_kopeks // 100} ₽'
 
         await dispatcher.feed_update(

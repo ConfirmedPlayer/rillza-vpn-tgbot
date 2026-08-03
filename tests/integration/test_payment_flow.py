@@ -58,7 +58,7 @@ async def payments(uow, panel, registry, app_settings, seeded_tariffs):
 
 @pytest_asyncio.fixture
 async def tariff(seeded_tariffs):
-    return seeded_tariffs[0]  # m1: 30 days, 200 rubles
+    return seeded_tariffs[0]  # m1: 30 days, 100 rubles
 
 
 class TestInvoice:
@@ -68,7 +68,7 @@ class TestInvoice:
         payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
 
         assert payment.status == PaymentStatus.PENDING
-        assert payment.amount_kopeks == 20_000
+        assert payment.amount_kopeks == 10_000
         assert payment.invoice_url.endswith(str(payment.id))
         assert payment.provider_invoice_id == f'inv-{payment.id}'
         assert payment.invoice_expires_at > datetime.now(UTC)
@@ -114,7 +114,7 @@ class TestFinalize:
         assert stored.status == PaymentStatus.PROVISIONED
         # What actually arrived is recorded, not compared to the price.
         assert stored.paid_amount_kopeks == 19_800
-        assert stored.amount_kopeks == 20_000
+        assert stored.amount_kopeks == 10_000
 
     async def test_double_tap_does_not_grant_twice(
         self, payments, tariff, provider, uow
