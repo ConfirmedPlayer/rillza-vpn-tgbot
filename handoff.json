@@ -5,10 +5,10 @@
     "branch": "master",
     "note": "Ветка по умолчанию называется master, не main. Рабочая ветка claude/project-description-jzw96t слита fast-forward и больше не нужна; на origin она ещё есть, владелец её не удалял.",
     "head": "54d48e8",
-    "pushed": false,
+    "pushed": true,
     "uncommitted": "нет",
     "directory": "/Users/confi/Documents/git_repos/rillza-vpn-tgbot на компьютере владельца (macOS). Прошлые сессии шли в песочнице Claude — там больше ничего не живёт.",
-    "progress": "Тарифы с числом устройств НАПИСАНЫ И ЗАКРЫТЫ РЕВЬЮ, но НЕ ЗАПУШЕНЫ И НЕ РАЗВЁРНУТЫ. 23 коммита поверх cd9244a. 292 passed / 0 skipped, ruff чист, alembic upgrade+check на чистой базе без расхождений. Боевой образ собран из 6f349a2 и всего этого не знает. Спека docs/superpowers/specs/2026-08-03-device-count-tariffs-design.md, план docs/superpowers/plans/2026-08-03-device-count-tariffs.md."
+    "progress": "Тарифы с числом устройств НАПИСАНЫ, ЗАКРЫТЫ РЕВЬЮ И ЗАПУШЕНЫ, но НЕ РАЗВЁРНУТЫ. 23 коммита поверх cd9244a. 292 passed / 0 skipped, ruff чист, alembic upgrade+check на чистой базе без расхождений. Боевой образ собран из 6f349a2 и всего этого не знает. Спека docs/superpowers/specs/2026-08-03-device-count-tariffs-design.md, план docs/superpowers/plans/2026-08-03-device-count-tariffs.md."
   },
   "next_action": {
     "what": "ВЕРНУТЬ ЦЕНУ ТАРИФА m1 НА 200 ₽. Сейчас она 2 ₽ — так тестировали покупку. Проверено запросом 2026-08-03: всё ещё 2 ₽.",
