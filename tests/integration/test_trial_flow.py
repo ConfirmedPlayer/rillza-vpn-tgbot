@@ -1,5 +1,6 @@
 """Trial issuance and the subscription screen, end to end."""
 
+import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
@@ -10,6 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
 from aiogram.types import CallbackQuery, Chat, Message, Update
 from aiogram.types import User as TelegramUser
+from sqlalchemy import text as sql_text
 
 from app.bot import keyboards
 from app.core.enums import SubscriptionOrigin, SubscriptionStatus
@@ -482,3 +484,87 @@ class TestRevokedSubscriptionScreen:
         buttons = button_texts(session)
         assert not any('Открыть подписку' in b for b in buttons)
         assert not any('Скопировать' in b for b in buttons)
+
+
+class TestTrialRacingAPurchase:
+    """The trial button outlives the screen that drew it.
+
+    ``is_available`` is answered once, when the menu is rendered. The
+    subscription can appear between that answer and the tap: the payment
+    poller runs every thirty seconds and finalises purchases without
+    asking anyone. Every other writer of a subscription serialises on
+    ``lock_user`` for exactly this reason — see its docstring, which
+    names the first-purchase INSERT as the one case a row lock cannot
+    cover. The trial did not take it, so its unlocked read could miss a
+    purchase committed a moment later and then collide with it on
+    uq_subscriptions_user_id, with ``trial_used_at`` already spent in a
+    transaction of its own.
+    """
+
+    async def _wait_until_blocked(self, session_factory) -> None:
+        """Wait until the tap is genuinely parked on a lock.
+
+        Without this the test would be a race about a race: if the tap
+        got all the way through before the purchase committed, it would
+        see no subscription, succeed, and pass on the broken code too.
+        Both the fixed path (advisory lock) and the broken one (the
+        unique index on user_id) park here, so waiting for it is safe.
+        """
+        async with UnitOfWork(session_factory) as watcher:
+            for _ in range(500):
+                waiting = await watcher.session.execute(
+                    sql_text(
+                        'select count(*) from pg_stat_activity '
+                        "where wait_event_type = 'Lock'"
+                    )
+                )
+                if waiting.scalar():
+                    return
+                await asyncio.sleep(0.01)
+        raise AssertionError('the trial never blocked on the purchase')
+
+    async def test_a_trial_tapped_while_a_purchase_lands_is_not_burned(
+        self, session_factory, panel, app_settings
+    ) -> None:
+        async with UnitOfWork(session_factory) as setup:
+            await setup.users.upsert(USER_ID)
+            await setup.commit()
+
+        async def tap():
+            async with UnitOfWork(session_factory) as uow:
+                return await TrialService(
+                    uow,
+                    SubscriptionService(uow, panel, app_settings),
+                    app_settings,
+                ).grant(USER_ID)
+
+        # A purchase mid-flight: holding the lock with the row inserted
+        # and not yet committed, exactly where _apply_days sits.
+        async with UnitOfWork(session_factory) as buyer:
+            await buyer.subscriptions.lock_user(USER_ID)
+            await SubscriptionService(
+                buyer, panel, app_settings
+            ).create_pending(
+                USER_ID,
+                expires_at=datetime.now(UTC) + timedelta(days=30),
+                origin=SubscriptionOrigin.PURCHASE,
+                max_devices=4,
+                commit=False,
+            )
+            tapped = asyncio.create_task(tap())
+            await self._wait_until_blocked(session_factory)
+            await buyer.commit()
+
+        result = await tapped
+
+        assert result.outcome is TrialOutcome.HAS_SUBSCRIPTION
+        async with UnitOfWork(session_factory) as check:
+            user = await check.users.get(USER_ID)
+            assert user is not None
+            # Once per account, forever: spending the latch on a trial
+            # that was never created takes it away for good.
+            assert user.trial_used is False
+            subscription = await check.subscriptions.get_by_user(USER_ID)
+            assert subscription is not None
+            # The purchase, untouched — not a trial that overwrote it.
+            assert subscription.max_devices == 4
