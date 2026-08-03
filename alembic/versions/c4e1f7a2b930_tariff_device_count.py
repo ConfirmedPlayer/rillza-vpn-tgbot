@@ -124,8 +124,12 @@ def downgrade() -> None:
     op.execute(f'DELETE FROM tariffs WHERE code IN ({codes})')
     op.drop_column('subscriptions', 'max_devices')
     op.drop_column('tariffs', 'max_devices')
-    # The panel is not touched here on purpose. Every account the bot
-    # manages keeps whatever explicit maxDevices this feature already
-    # pushed, and the reverted code never sends that field again, so
-    # that state — an explicit limit with no column to explain it —
-    # becomes unreachable from the schema after this downgrade.
+    # The panel is not touched here on purpose, and this downgrade
+    # assumes the app code is reverted along with the schema. The old
+    # PUT (set_expiry) sends only expireAt, so it cannot clear an
+    # explicit maxDevices a bot-managed account already has — those
+    # accounts keep their 2 or 4 with no column left to explain it.
+    # But the old create_or_get_user sends 'maxDevices': 0 on every
+    # create, so any account the panel later loses and the bot
+    # recreates (a returning user, a lost row) goes back to 0 — under
+    # the group limit again, exactly like before this feature shipped.
