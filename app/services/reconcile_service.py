@@ -32,13 +32,19 @@ class ReconcileReport:
     checked: int = 0
     created: int = 0
     expiry_fixed: int = 0
+    devices_fixed: int = 0
     re_disabled: int = 0
     failed: int = 0
     orphans: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> int:
-        return self.created + self.expiry_fixed + self.re_disabled
+        return (
+            self.created
+            + self.expiry_fixed
+            + self.devices_fixed
+            + self.re_disabled
+        )
 
 
 class ReconcileService:
@@ -140,6 +146,16 @@ class ReconcileService:
                 subscription, subscription.expires_at
             )
             report.expiry_fixed += 1
+            return
+
+        if panel_user.max_devices != subscription.max_devices:
+            # push_state, not extend: extend clears notified_stage, and
+            # a limit repair must not make someone receive "остался
+            # день" a second time. An expiry drift above already
+            # carries the limit with it, so only the limit-only case
+            # reaches here.
+            await self._subscriptions.push_state(subscription)
+            report.devices_fixed += 1
             return
 
         if not panel_user.enabled and subscription.status == (

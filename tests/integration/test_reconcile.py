@@ -252,6 +252,44 @@ async def test_a_pending_row_with_a_healthy_account_is_finished(
     assert subscription.provisioned_at is not None
 
 
+async def test_a_device_limit_drift_is_pushed_back(
+    uow, subscriptions, reconciler, panel
+) -> None:
+    """The panel has no reconciliation of its own; a limit that never
+    landed would stay wrong until the customer complained."""
+    await make_subscription(uow, subscriptions, max_devices=4)
+    # Someone lowered it in the panel by hand.
+    panel.users[str(USER_ID)] = panel.users[str(USER_ID)].model_copy(
+        update={'max_devices': 2}
+    )
+
+    report = await reconciler.run()
+
+    assert report.devices_fixed == 1
+    assert panel.users[str(USER_ID)].max_devices == 4
+
+
+async def test_fixing_a_device_limit_does_not_restart_the_reminders(
+    uow, subscriptions, reconciler, panel
+) -> None:
+    """extend() clears notified_stage, so repairing a limit through it
+    would send "остался день" to the same person twice."""
+    subscription = await make_subscription(
+        uow, subscriptions, days=1, max_devices=4
+    )
+    subscription.notified_stage = '1d'
+    await uow.commit()
+    panel.users[str(USER_ID)] = panel.users[str(USER_ID)].model_copy(
+        update={'max_devices': 2}
+    )
+
+    await reconciler.run()
+
+    refreshed = await uow.subscriptions.get_by_user(USER_ID)
+    assert refreshed is not None
+    assert refreshed.notified_stage == '1d'
+
+
 async def test_provision_corrects_a_stale_device_limit(
     uow, subscriptions, panel
 ) -> None:
