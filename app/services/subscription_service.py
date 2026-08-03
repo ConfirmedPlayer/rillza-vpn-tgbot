@@ -44,6 +44,11 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+#: What a subscription gets when nobody bought a device count: the
+#: trial, and an admin grant to someone who had no subscription.
+DEFAULT_MAX_DEVICES = 2
+
+
 class SubscriptionService:
     def __init__(
         self, uow: UnitOfWork, panel: CelerityClient, settings: Settings
@@ -60,9 +65,14 @@ class SubscriptionService:
         telegram_id: int,
         expires_at: datetime,
         origin: SubscriptionOrigin,
+        max_devices: int,
         commit: bool = True,
     ) -> Subscription:
         """Record the subscription before touching the panel.
+
+        ``max_devices`` has no default deliberately. A default would
+        eventually reach the trial or an admin grant silently, and the
+        number in this column is what the panel will enforce.
 
         ``commit=False`` leaves the row flushed but uncommitted, for a
         caller that must land it together with something else. Payment
@@ -77,6 +87,7 @@ class SubscriptionService:
             status=SubscriptionStatus.PENDING,
             origin=origin,
             expires_at=expires_at,
+            max_devices=max_devices,
             panel_user_id=str(telegram_id),
         )
         await self._uow.subscriptions.add(subscription)
@@ -90,18 +101,25 @@ class SubscriptionService:
         """Make the panel match the row, then mark the row active.
 
         Safe to call repeatedly: an existing panel account is reused and
-        its expiry is set to the stored absolute date.
+        its expiry and device limit are set to the stored values.
         """
         panel_user, created = await self._panel.create_or_get_user(
             subscription.panel_user_id,
             expire_at=subscription.expires_at,
+            max_devices=subscription.max_devices,
             username=username,
         )
-        if not created and panel_user.expire_at != subscription.expires_at:
-            # The account predates this subscription (a returning user, or
-            # a half-finished attempt): move it onto our absolute date.
-            panel_user = await self._panel.set_expiry(
-                subscription.panel_user_id, subscription.expires_at
+        if not created and (
+            panel_user.expire_at != subscription.expires_at
+            or panel_user.max_devices != subscription.max_devices
+        ):
+            # The account predates this subscription (a returning user,
+            # a half-finished attempt, or a plan with a different
+            # device count): move it onto our values.
+            panel_user = await self._panel.set_state(
+                subscription.panel_user_id,
+                subscription.expires_at,
+                subscription.max_devices,
             )
 
         now = utcnow()
@@ -135,31 +153,38 @@ class SubscriptionService:
         subscription.notified_stage = None
         await self._uow.commit()
 
-        await self.push_expiry(subscription)
+        await self.push_state(subscription)
         return subscription
 
-    async def push_expiry(self, subscription: Subscription) -> Subscription:
+    async def push_state(self, subscription: Subscription) -> Subscription:
         """Make the panel agree with the row as it stands right now.
 
-        Sends the subscription's own date rather than any caller-held
-        value, so a retry can never install an outdated expiry.
+        Sends the subscription's own values rather than any caller-held
+        ones, so a retry can never install an outdated expiry or an
+        outdated device limit.
         """
         try:
-            panel_user = await self._panel.set_expiry(
-                subscription.panel_user_id, subscription.expires_at
+            panel_user = await self._panel.set_state(
+                subscription.panel_user_id,
+                subscription.expires_at,
+                subscription.max_devices,
             )
         except PanelNotFoundError:
             # No account yet (an earlier provisioning failed) or it was
             # removed in the panel: create it rather than lose the days.
             panel_user, created = await self._panel.create_or_get_user(
-                subscription.panel_user_id, expire_at=subscription.expires_at
+                subscription.panel_user_id,
+                expire_at=subscription.expires_at,
+                max_devices=subscription.max_devices,
             )
             if not created:
-                # It existed after all, so the create carried no date
-                # and the account still holds the old one. Reporting
+                # It existed after all, so the create carried no values
+                # and the account still holds the old ones. Reporting
                 # success here left the panel behind the database.
-                panel_user = await self._panel.set_expiry(
-                    subscription.panel_user_id, subscription.expires_at
+                panel_user = await self._panel.set_state(
+                    subscription.panel_user_id,
+                    subscription.expires_at,
+                    subscription.max_devices,
                 )
         subscription.subscription_token = (
             panel_user.subscription_token or subscription.subscription_token

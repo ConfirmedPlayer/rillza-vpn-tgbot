@@ -35,13 +35,16 @@ async def reconciler(uow, panel, app_settings, subscriptions):
     return ReconcileService(uow, panel, app_settings, subscriptions)
 
 
-async def make_subscription(uow, subscriptions, days=30, provision=True):
+async def make_subscription(
+    uow, subscriptions, days=30, provision=True, max_devices=2
+):
     await uow.users.upsert(USER_ID)
     await uow.commit()
     subscription = await subscriptions.create_pending(
         USER_ID,
         expires_at=datetime.now(UTC) + timedelta(days=days),
         origin=SubscriptionOrigin.PURCHASE,
+        max_devices=max_devices,
     )
     if provision:
         await subscriptions.provision(subscription)
@@ -152,7 +155,7 @@ async def test_unknown_panel_accounts_are_reported_not_touched(
     """A hand-made account must survive: disabling it would be an outage."""
     await make_subscription(uow, subscriptions)
     await panel.create_or_get_user(
-        '999', expire_at=datetime.now(UTC) + timedelta(days=5)
+        '999', expire_at=datetime.now(UTC) + timedelta(days=5), max_devices=2
     )
 
     report = await reconciler.run()
@@ -247,3 +250,22 @@ async def test_a_pending_row_with_a_healthy_account_is_finished(
 
     assert subscription.status == SubscriptionStatus.ACTIVE
     assert subscription.provisioned_at is not None
+
+
+async def test_provision_corrects_a_stale_device_limit(
+    uow, subscriptions, panel
+) -> None:
+    """An existing panel account with the right date and the wrong
+    limit used to be left alone: provision compared expiries only, so a
+    returning buyer paid for four devices and kept two."""
+    subscription = await make_subscription(
+        uow, subscriptions, max_devices=4, provision=False
+    )
+    # The account predates this purchase: same date, old limit.
+    await panel.create_or_get_user(
+        str(USER_ID), expire_at=subscription.expires_at, max_devices=2
+    )
+
+    await subscriptions.provision(subscription)
+
+    assert panel.users[str(USER_ID)].max_devices == 4

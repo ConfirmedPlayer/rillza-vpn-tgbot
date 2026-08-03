@@ -244,6 +244,8 @@ class CelerityClient:
         self,
         panel_user_id: str,
         expire_at: datetime | None,
+        *,
+        max_devices: int,
         username: str = '',
         group_id: str | None = None,
     ) -> tuple[PanelUser, bool]:
@@ -251,6 +253,10 @@ class CelerityClient:
 
         Returns ``(user, created)``. A 409 carries the existing user in
         the body, which makes this a natural create-or-fetch.
+
+        ``max_devices`` is keyword-only and has no default on purpose:
+        a default would silently sell two devices to someone who paid
+        for four.
         """
         body = {
             'userId': panel_user_id,
@@ -260,9 +266,9 @@ class CelerityClient:
             'enabled': True,
             'groups': [group_id or await self.resolve_group_id()],
             'expireAt': _isoformat(expire_at),
-            # We sell unlimited traffic; device count comes from the group.
+            # We sell unlimited traffic; the device count is ours.
             'trafficLimit': 0,
-            'maxDevices': 0,
+            'maxDevices': max_devices,
         }
         try:
             payload = await self._request('POST', '/api/users', json=body)
@@ -273,18 +279,26 @@ class CelerityClient:
             return existing, False
         return PanelUser.model_validate(payload), True
 
-    async def set_expiry(
-        self, panel_user_id: str, expire_at: datetime | None
+    async def set_state(
+        self, panel_user_id: str, expire_at: datetime | None, max_devices: int
     ) -> PanelUser:
-        """Move the expiry date. The panel re-enables a lapsed user itself.
+        """Push the two fields the database owns. Re-enables a lapsed user.
 
         ``expire_at`` is absolute — the caller computes
         ``max(now, current) + duration`` once and reuses it on retries.
+
+        Both fields go in one request. Sending them separately would
+        leave "expiry updated, limit not" between the two calls, and
+        the panel is not transactional, so that state survives until
+        the next reconcile.
         """
         payload = await self._request(
             'PUT',
             f'/api/users/{panel_user_id}',
-            json={'expireAt': _isoformat(expire_at)},
+            json={
+                'expireAt': _isoformat(expire_at),
+                'maxDevices': max_devices,
+            },
         )
         return PanelUser.model_validate(payload)
 

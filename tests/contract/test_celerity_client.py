@@ -211,14 +211,16 @@ class TestCreateUser:
         )
         mocked.post(f'{BASE}/api/users', status=201, payload=user_payload())
 
-        user, created = await client.create_or_get_user('42', NOW, 'ivan')
+        user, created = await client.create_or_get_user(
+            '42', NOW, username='ivan', max_devices=4
+        )
 
         body = last_body(mocked)
         assert body['enabled'] is True
         assert body['groups'] == [GROUP_ID]
         assert body['userId'] == '42'
         assert body['trafficLimit'] == 0
-        assert body['maxDevices'] == 0
+        assert body['maxDevices'] == 4
         assert created is True
         assert user.subscription_token == 'abc123def456'
         await client.close()
@@ -237,7 +239,7 @@ class TestCreateUser:
         mocked.get(f'{BASE}/api/users/42', payload=user_payload())
 
         user, created = await client.create_or_get_user(
-            '42', NOW, group_id=GROUP_ID
+            '42', NOW, group_id=GROUP_ID, max_devices=2
         )
 
         assert created is False
@@ -252,7 +254,7 @@ class TestCreateUser:
         )
 
         user, _ = await client.create_or_get_user(
-            '42', None, group_id=GROUP_ID
+            '42', None, group_id=GROUP_ID, max_devices=2
         )
 
         assert last_body(mocked)['expireAt'] is None
@@ -268,10 +270,10 @@ class TestRenewAndRevoke:
         target = NOW + timedelta(days=30)
         mocked.put(f'{BASE}/api/users/42', payload=user_payload())
 
-        await client.set_expiry('42', target)
+        await client.set_state('42', target, 2)
 
         body = last_body(mocked)
-        assert body == {'expireAt': target.isoformat()}
+        assert body == {'expireAt': target.isoformat(), 'maxDevices': 2}
         await client.close()
 
     async def test_renewal_is_idempotent_under_retry(
@@ -281,13 +283,30 @@ class TestRenewAndRevoke:
         mocked.put(f'{BASE}/api/users/42', status=500, payload={})
         mocked.put(f'{BASE}/api/users/42', payload=user_payload())
 
-        await client.set_expiry('42', target)
+        await client.set_state('42', target, 2)
 
         sent = [
             call.kwargs['json']['expireAt']
             for call in list(mocked.requests.values())[-1]
         ]
         assert sent == [target.isoformat(), target.isoformat()]
+        await client.close()
+
+    async def test_renewal_carries_the_device_limit(
+        self, client, mocked
+    ) -> None:
+        """One PUT, both fields.
+
+        Two calls would leave "expiry updated, limit not" alive until
+        the next reconcile — up to four hours.
+        """
+        target = NOW + timedelta(days=30)
+        mocked.put(f'{BASE}/api/users/42', payload=user_payload())
+
+        await client.set_state('42', target, 4)
+
+        body = last_body(mocked)
+        assert body == {'expireAt': target.isoformat(), 'maxDevices': 4}
         await client.close()
 
     async def test_revoke_disables_and_keeps_the_account(

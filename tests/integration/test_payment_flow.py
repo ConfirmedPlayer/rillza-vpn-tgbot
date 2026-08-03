@@ -533,7 +533,10 @@ class TestStaleWorkerCannotDoubleApply:
             await SubscriptionService(
                 setup, panel, app_settings
             ).create_pending(
-                USER_ID, expires_at=start, origin=SubscriptionOrigin.TRIAL
+                USER_ID,
+                expires_at=start,
+                origin=SubscriptionOrigin.TRIAL,
+                max_devices=2,
             )
 
         async with UnitOfWork(session_factory) as worker:

@@ -423,6 +423,7 @@ class TestThreadHistory:
                 CUSTOMER_ID,
                 expires_at=datetime.now(UTC).replace(microsecond=0),
                 origin=SubscriptionOrigin.PURCHASE,
+                max_devices=2,
             )
             await subscriptions.provision(subscription)
 

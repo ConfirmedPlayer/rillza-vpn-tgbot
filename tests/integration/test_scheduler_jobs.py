@@ -201,6 +201,7 @@ class TestExpiryReminderSkipsAFreshTrial:
             USER_ID,
             expires_at=datetime.now(UTC) + timedelta(days=3),
             origin=SubscriptionOrigin.TRIAL,
+            max_devices=2,
         )
         subscription.status = SubscriptionStatus.ACTIVE
         await uow.commit()
@@ -221,6 +222,7 @@ class TestExpiryReminderSkipsAFreshTrial:
             USER_ID,
             expires_at=datetime.now(UTC) + timedelta(hours=12),
             origin=SubscriptionOrigin.TRIAL,
+            max_devices=2,
         )
         subscription.status = SubscriptionStatus.ACTIVE
         # Granted two and a half days ago: a real three-day trial that
@@ -247,6 +249,7 @@ class TestExpiryReminderSkipsAFreshTrial:
             USER_ID,
             expires_at=datetime.now(UTC) + timedelta(days=2, hours=12),
             origin=SubscriptionOrigin.PURCHASE,
+            max_devices=2,
         )
         subscription.status = SubscriptionStatus.ACTIVE
         await uow.commit()

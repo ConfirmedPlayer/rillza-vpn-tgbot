@@ -196,6 +196,7 @@ class TestUserCard:
                 CUSTOMER_ID,
                 expires_at=datetime.now(UTC) + timedelta(days=10),
                 origin=SubscriptionOrigin.PURCHASE,
+                max_devices=2,
             )
             await subscriptions.provision(subscription)
 
@@ -241,6 +242,37 @@ class TestUserCard:
             assert subscription is not None
             # Added on top of what was left, not from today.
             assert (subscription.expires_at - first).days == 90
+
+    async def test_a_grant_does_not_change_the_device_count(
+        self, dispatcher, bot, session, session_factory, panel, admin_settings
+    ) -> None:
+        """More devices are sold, not granted: «➕ 30 дней» moves the
+        date and nothing else."""
+        async with UnitOfWork(session_factory) as uow:
+            await uow.users.upsert(CUSTOMER_ID, username='ivan')
+            await uow.commit()
+            subscriptions = SubscriptionService(uow, panel, admin_settings)
+            subscription = await subscriptions.create_pending(
+                CUSTOMER_ID,
+                expires_at=datetime.now(UTC) + timedelta(days=10),
+                origin=SubscriptionOrigin.PURCHASE,
+                max_devices=4,
+            )
+            await subscriptions.provision(subscription)
+
+        await dispatcher.feed_update(
+            bot,
+            callback_update(f'{keyboards.ADMIN_GRANT_PREFIX}{CUSTOMER_ID}:30'),
+        )
+
+        async with UnitOfWork(session_factory) as uow:
+            refreshed = await uow.subscriptions.get_by_user(CUSTOMER_ID)
+            assert refreshed is not None
+            assert refreshed.max_devices == 4
+            assert refreshed.expires_at > datetime.now(UTC) + timedelta(
+                days=39
+            )
+        assert panel.users[str(CUSTOMER_ID)].max_devices == 4
 
     async def test_revoke_disables_without_deleting(
         self, dispatcher, bot, session, session_factory, panel
@@ -352,6 +384,7 @@ class TestExpiryReminders:
             CUSTOMER_ID,
             expires_at=datetime.now(UTC) + timedelta(days=days),
             origin=SubscriptionOrigin.PURCHASE,
+            max_devices=2,
         )
         await subscriptions.provision(subscription)
         return subscription

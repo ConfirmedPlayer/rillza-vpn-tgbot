@@ -293,6 +293,7 @@ class PaymentService:
                 payment.user_id,
                 expires_at=now + duration,
                 origin=SubscriptionOrigin.PURCHASE,
+                max_devices=tariff.max_devices,
                 # Must land in the same transaction as the latch below.
                 commit=False,
             )
@@ -317,7 +318,7 @@ class PaymentService:
                 await self._subscriptions.provision(subscription)
             else:
                 # Always push the row as it stands, never a stale target.
-                await self._subscriptions.push_expiry(subscription)
+                await self._subscriptions.push_state(subscription)
         except PanelError as error:
             logger.warning(
                 'Payment {} is paid but the panel is unreachable: {}',

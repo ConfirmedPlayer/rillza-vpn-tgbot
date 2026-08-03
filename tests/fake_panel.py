@@ -66,6 +66,8 @@ class FakePanel:
         self,
         panel_user_id: str,
         expire_at: datetime | None,
+        *,
+        max_devices: int,
         username: str = '',
         group_id: str | None = None,
     ) -> tuple[PanelUser, bool]:
@@ -79,7 +81,7 @@ class FakePanel:
             enabled=True,
             expireAt=expire_at,
             trafficLimit=0,
-            maxDevices=0,
+            maxDevices=max_devices,
             subscriptionToken=secrets.token_hex(8),
         )
         self.users[panel_user_id] = user
@@ -93,13 +95,17 @@ class FakePanel:
         start = (page - 1) * limit
         return ordered[start : start + limit], len(ordered)
 
-    async def set_expiry(
-        self, panel_user_id: str, expire_at: datetime | None
+    async def set_state(
+        self, panel_user_id: str, expire_at: datetime | None, max_devices: int
     ) -> PanelUser:
-        self._guard(f'set_expiry:{panel_user_id}')
+        self._guard(f'set_state:{panel_user_id}')
         user = self._require(panel_user_id)
         updated = user.model_copy(
-            update={'expire_at': expire_at, 'enabled': True}
+            update={
+                'expire_at': expire_at,
+                'max_devices': max_devices,
+                'enabled': True,
+            }
         )
         self.users[panel_user_id] = updated
         return updated

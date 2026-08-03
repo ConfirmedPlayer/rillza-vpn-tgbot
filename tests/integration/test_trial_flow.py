@@ -152,6 +152,20 @@ class TestTrialFlow:
             'Открыть подписку' in text for text in button_texts(session)
         )
 
+    async def test_trial_is_two_devices(
+        self, dispatcher, bot, session, panel, session_factory
+    ) -> None:
+        """The trial never inherits a paid plan's device count."""
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.TRIAL_CONFIRM)
+        )
+
+        assert panel.users[str(USER_ID)].max_devices == 2
+        async with UnitOfWork(session_factory) as uow:
+            subscription = await uow.subscriptions.get_by_user(USER_ID)
+            assert subscription is not None
+            assert subscription.max_devices == 2
+
     async def test_second_tap_does_not_grant_a_second_trial(
         self, dispatcher, bot, session, panel, session_factory
     ) -> None:
@@ -364,6 +378,7 @@ async def test_pending_subscription_does_not_read_as_expired(
             USER_ID,
             expires_at=datetime.now(UTC) + timedelta(days=30),
             origin=SubscriptionOrigin.PURCHASE,
+            max_devices=2,
         )
 
         view = await subscriptions.describe(USER_ID)

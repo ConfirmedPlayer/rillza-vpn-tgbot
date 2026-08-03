@@ -15,6 +15,7 @@ from app.core.settings import Settings
 from app.db.models import Subscription
 from app.integrations.celerity import PanelError
 from app.services.subscription_service import (
+    DEFAULT_MAX_DEVICES,
     SubscriptionService,
     trial_expiry,
     utcnow,
@@ -83,6 +84,7 @@ class TrialService:
             telegram_id,
             expires_at=trial_expiry(self._settings, now),
             origin=SubscriptionOrigin.TRIAL,
+            max_devices=DEFAULT_MAX_DEVICES,
         )
         return await self._finish(subscription, username)
 

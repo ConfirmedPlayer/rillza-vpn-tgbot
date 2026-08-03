@@ -20,7 +20,11 @@ from app.integrations.celerity import CelerityClient, PanelError
 from app.services.broadcast_service import BroadcastService
 from app.services.payment_service import FinalizeOutcome, PaymentService
 from app.services.rate_limit import Cooldown
-from app.services.subscription_service import SubscriptionService, utcnow
+from app.services.subscription_service import (
+    DEFAULT_MAX_DEVICES,
+    SubscriptionService,
+    utcnow,
+)
 from app.services.support_service import SupportService, SupportUserUnreachable
 from app.services.uow import UnitOfWork
 
@@ -275,6 +279,9 @@ async def handle_grant(
                 telegram_id,
                 expires_at=now + timedelta(days=days),
                 origin=SubscriptionOrigin.ADMIN_GRANT,
+                # A grant moves the date, never the device count. More
+                # devices are sold, not granted.
+                max_devices=DEFAULT_MAX_DEVICES,
             )
             await subscriptions.provision(subscription)
         else:
