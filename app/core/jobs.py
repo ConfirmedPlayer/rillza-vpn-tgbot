@@ -47,3 +47,12 @@ def stale_after(job_name: str) -> timedelta:
     """How quiet a job may be before the admin screen flags it."""
     interval = JOB_INTERVALS.get(job_name, MIN_STALE_AFTER)
     return max(interval * MISSED_RUNS_BEFORE_STALE, MIN_STALE_AFTER)
+
+
+#: How long every job may be silent before the container calls itself
+#: unhealthy. Deliberately tighter than :func:`stale_after`, which keeps
+#: an admin screen from flapping between ✅ and ⚠️; this one answers a
+#: different question — is the event loop turning at all. The two
+#: fastest jobs tick every 30 and 60 seconds, so five minutes of total
+#: silence is not a slow pass, it is a stopped scheduler.
+HEALTHCHECK_QUIET = timedelta(minutes=5)

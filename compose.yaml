@@ -16,6 +16,21 @@ services:
     env_file:
       - .env
     logging: *logging
+    # restart: unless-stopped only reacts to a process that exited. A
+    # coroutine that hangs without crashing keeps the container "up"
+    # while the bot answers nobody, and unattended on a VPS nobody
+    # notices. This asks the scheduler's heartbeats from outside the
+    # hung process — the one question a hang cannot answer falsely.
+    #
+    # Docker does not restart an unhealthy container by itself: this
+    # surfaces the state in `docker ps` for something on the host to act
+    # on. start_period covers the first boot, before any job has run.
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.healthcheck"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 180s
     depends_on:
       postgres:
         condition: service_healthy

@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import suppress
+from datetime import timedelta
 
 import orjson
 from aiogram import Bot, Dispatcher
@@ -44,9 +45,22 @@ def build_log_bot(settings: Settings) -> Bot | None:
     return Bot(token=settings.log_bot_token.get_secret_value())
 
 
+#: How long an untouched FSM key survives. Every dialog here is a
+#: single screen someone may simply walk away from — «Поддержка» opened
+#: and never written into, an admin price prompt abandoned — and without
+#: a TTL each of those leaves a key that nothing ever deletes. A day is
+#: far longer than any of these flows and short enough that the leak
+#: stops being permanent.
+FSM_TTL = timedelta(days=1)
+
+
 def build_storage(settings: Settings) -> BaseStorage:
     return RedisStorage.from_url(
-        settings.redis_url, json_loads=orjson.loads, json_dumps=_dumps
+        settings.redis_url,
+        json_loads=orjson.loads,
+        json_dumps=_dumps,
+        state_ttl=FSM_TTL,
+        data_ttl=FSM_TTL,
     )
 
 
