@@ -137,6 +137,43 @@ class TestThePollerTellsTheUser:
         assert len(messages) == 1
         assert 'Оплата получена' in messages[0]
 
+    async def test_the_late_sweep_announces_what_it_rescues(
+        self,
+        runner,
+        paid_invoice,
+        provider,
+        panel,
+        session,
+        uow,
+        app_settings,
+        registry,
+    ) -> None:
+        """The bot promised this one out loud.
+
+        ru.PAYMENT_EXPIRED tells the user "деньги, если вы всё же успели
+        заплатить, мы увидим и доступ выдадим". The sweep does see them
+        and does grant the access — and then says nothing, so the last
+        word the user heard is that their invoice failed. Someone who
+        has been told their payment did not go through, and is never
+        told otherwise, pays a second time.
+        """
+        paid_invoice.invoice_expires_at = datetime.now(UTC) - timedelta(
+            hours=2
+        )
+        await uow.commit()
+        subscriptions = SubscriptionService(uow, panel, app_settings)
+        service = PaymentService(uow, registry, subscriptions, app_settings)
+        await service.expire_stale()
+        # The money lands after the invoice is already closed.
+        provider.mark_paid(paid_invoice.id)
+        session.requests.clear()
+
+        await runner.sweep_late_payments()
+
+        messages = sent_to(session, USER_ID)
+        assert len(messages) == 1
+        assert 'Оплата получена' in messages[0]
+
     async def test_a_user_who_blocked_the_bot_is_recorded_not_retried(
         self, runner, paid_invoice, provider, session, session_factory
     ) -> None:

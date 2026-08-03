@@ -274,7 +274,7 @@ class TestExpiryAndLateMoney:
 
         late = await payments.sweep_late_payments()
 
-        assert [p.id for p in late] == [payment.id]
+        assert [r.payment.id for r in late] == [payment.id]
         stored = await uow.payments.get(payment.id)
         assert stored is not None
         assert stored.status == PaymentStatus.PROVISIONED
@@ -312,7 +312,7 @@ class TestExpiryAndLateMoney:
 
         late = await payments.sweep_late_payments()
 
-        assert [p.id for p in late] == [payment.id]
+        assert [r.payment.id for r in late] == [payment.id]
         stored = await uow.payments.get(payment.id)
         assert stored is not None
         assert stored.status == PaymentStatus.PROVISIONED
@@ -341,7 +341,7 @@ class TestExpiryAndLateMoney:
         await uow.commit()
         late = await payments.sweep_late_payments()
 
-        assert [p.id for p in late] == [payment.id]
+        assert [r.payment.id for r in late] == [payment.id]
 
 
 class TestPoller:

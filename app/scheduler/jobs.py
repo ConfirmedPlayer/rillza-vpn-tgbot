@@ -152,10 +152,11 @@ class JobRunner:
         )
 
     async def sweep_late_payments(self) -> None:
-        await self.run(
-            LATE_PAYMENT_SWEEP,
-            lambda uow: self._payments(uow).sweep_late_payments(),
-        )
+        await self.run(LATE_PAYMENT_SWEEP, self._sweep_late_payments)
+
+    async def _sweep_late_payments(self, uow: UnitOfWork) -> None:
+        delivered = await self._payments(uow).sweep_late_payments()
+        await self._announce_delivery(uow, delivered)
 
     async def send_expiry_reminders(self) -> None:
         await self.run(

@@ -383,7 +383,7 @@ class PaymentService:
         await self._uow.commit()
         return expired
 
-    async def sweep_late_payments(self) -> list[Payment]:
+    async def sweep_late_payments(self) -> list[FinalizeResult]:
         """Re-check recently expired invoices for money that arrived late.
 
         Money does arrive after a 30-minute TTL. Without this it would
@@ -395,12 +395,22 @@ class PaymentService:
         restart, one misfire, or one provider outage, and an invoice
         falls between two runs and is never looked at again — and this
         is the last thing in the system that would have found it.
+
+        Returns what it delivered, exactly like ``poll_pending`` and
+        ``finish_provisioning``, because the caller has to tell these
+        people. They are the ones who were told "счёт больше не
+        действителен" and promised the money would still be seen — the
+        one group in the system that has already been given a reason to
+        believe their purchase failed. Money found but not yet
+        provisioned (the panel is down) is deliberately left out: it
+        stays PAID, the provisioning watcher finishes it, and the
+        announcement comes from there rather than twice.
         """
         now = utcnow()
         candidates = await self._uow.payments.list_recently_expired(
             now - SWEEP_LOOKBACK, now
         )
-        late: list[Payment] = []
+        delivered: list[FinalizeResult] = []
         for payment in candidates:
             provider = self._providers.get(payment.provider)
             if provider is None:
@@ -430,6 +440,7 @@ class PaymentService:
             if await self._uow.payments.reopen(payment.id) is None:
                 continue
             await self._uow.commit()
-            await self.check_and_finalize(payment.id)
-            late.append(payment)
-        return late
+            result = await self.check_and_finalize(payment.id)
+            if result.outcome is FinalizeOutcome.PROVISIONED:
+                delivered.append(result)
+        return delivered
