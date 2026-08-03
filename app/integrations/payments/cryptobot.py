@@ -150,20 +150,52 @@ class CryptoBotProvider:
                 return PaymentCheck(status)
             return PaymentCheck(
                 ProviderStatus.PAID,
-                paid_amount_kopeks=_to_kopeks(
-                    invoice.get('paid_fiat_rate_amount')
-                    or invoice.get('amount')
-                ),
+                paid_amount_kopeks=_settled_kopeks(invoice),
                 paid_currency=str(invoice.get('fiat') or 'RUB'),
             )
         # Not in the recent window: our own TTL decides when to give up.
         return PaymentCheck(ProviderStatus.PENDING)
 
 
-def _to_kopeks(amount: Any) -> int | None:
+def _settled_kopeks(invoice: dict[str, Any]) -> int | None:
+    """What actually arrived, in the currency the invoice was priced in.
+
+    A fiat invoice is paid in crypto: ``paid_amount`` is denominated in
+    ``paid_asset``, and ``paid_fiat_rate`` is that asset's price in
+    ``fiat``, so their product is the rouble value the buyer settled.
+    ``amount`` is only what was asked for — the rate moves between
+    issuing an invoice and paying it, which is the whole reason this
+    column is recorded rather than assumed.
+
+    This used to read ``paid_fiat_rate_amount``. There is no such field
+    in the Crypto Pay API, so the lookup always missed and the ``or``
+    fell through to the sticker price for every crypto payment ever
+    made — a column that reads as an observation while holding a
+    constant.
+
+    CryptoBot's own fee (``fee_amount``, in ``paid_asset``) is *not*
+    subtracted. No crypto purchase has ever gone through this bot, so
+    whether ``paid_amount`` is already net of it is unverified, and a
+    computed guess in a column the operator reads as observed is worse
+    than a gross figure that says what it is. Worth settling against
+    the wallet on the first real one.
+    """
+    paid = _to_float(invoice.get('paid_amount'))
+    rate = _to_float(invoice.get('paid_fiat_rate'))
+    if paid is not None and rate is not None:
+        return round(paid * rate * 100)
+    return _to_kopeks(invoice.get('amount'))
+
+
+def _to_float(amount: Any) -> float | None:
     if amount is None:
         return None
     try:
-        return round(float(amount) * 100)
+        return float(amount)
     except (TypeError, ValueError):
         return None
+
+
+def _to_kopeks(amount: Any) -> int | None:
+    value = _to_float(amount)
+    return None if value is None else round(value * 100)

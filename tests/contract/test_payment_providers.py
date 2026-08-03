@@ -319,6 +319,50 @@ class TestCryptoBot:
         assert check.status is ProviderStatus.PAID
         assert check.paid_amount_kopeks == 96_000
 
+    async def test_what_settled_is_recorded_not_what_was_asked(
+        self, cryptobot, mocked
+    ) -> None:
+        """A fiat invoice is paid in crypto, at the rate of that moment.
+
+        ``amount`` is only what the invoice asked for. What the buyer
+        actually settled is ``paid_amount`` (in ``paid_asset``) valued
+        at ``paid_fiat_rate`` — and the two differ, because the rate
+        moves between issuing an invoice and paying it. Recording the
+        sticker price back into the column that exists to hold the
+        observed amount makes it useless for exactly the job it has:
+        working out a refund by hand.
+        """
+        mocked.post(
+            f'{CRYPTO}/getInvoices',
+            payload={
+                'ok': True,
+                'result': {
+                    'items': [
+                        {
+                            'invoice_id': 777,
+                            'payload': str(PAYMENT_ID),
+                            'status': 'paid',
+                            'currency_type': 'fiat',
+                            'fiat': 'RUB',
+                            'amount': '960.00',
+                            'paid_asset': 'USDT',
+                            'paid_amount': '9.9',
+                            'paid_fiat_rate': '95.00',
+                            'fee_asset': 'USDT',
+                            'fee_amount': '0.3',
+                        }
+                    ]
+                },
+            },
+        )
+
+        check = await cryptobot.check_payment(PAYMENT_ID, '777')
+
+        assert check.status is ProviderStatus.PAID
+        # 9.9 USDT at 95 RUB, not the 960 the invoice asked for.
+        assert check.paid_amount_kopeks == 94_050
+        assert check.paid_currency == 'RUB'
+
     @pytest.mark.parametrize(
         'status, expected',
         [
