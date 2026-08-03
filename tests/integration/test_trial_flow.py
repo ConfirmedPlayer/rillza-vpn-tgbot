@@ -323,6 +323,9 @@ class TestSubscriptionScreen:
             text = render_subscription(view, datetime.now(UTC))
 
         assert 'закончился' in text
+        # An expired customer deciding whether to renew still deserves
+        # to be told what they had.
+        assert 'до 2 устройств' in text
 
 
 class TestGuide:
@@ -404,6 +407,8 @@ async def test_pending_subscription_does_not_read_as_expired(
 
     assert 'Выдаём доступ' in text
     assert 'закончился' not in text
+    # Decided at purchase, just not delivered yet — still worth naming.
+    assert 'до 2 устройств' in text
 
 
 class TestRevokedAccessStaysRevoked:

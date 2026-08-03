@@ -30,14 +30,20 @@ def render_subscription(view, now) -> str:
     subscription = view.subscription
     until = ru.format_date(subscription.expires_at)
 
+    devices = ru.SUBSCRIPTION_DEVICES.format(devices=subscription.max_devices)
+
     if subscription.status == SubscriptionStatus.REVOKED:
         return ru.SUBSCRIPTION_REVOKED
     if subscription.status == SubscriptionStatus.PENDING:
         # Recorded but not yet delivered: saying "истекла" here would be
-        # a lie, and the date shown would be in the future.
-        return ru.SUBSCRIPTION_PENDING
+        # a lie, and the date shown would be in the future. Still worth
+        # naming the device count: it is already decided, just not
+        # delivered yet.
+        return ru.SUBSCRIPTION_PENDING + devices
     if not subscription.is_active_at(now):
-        return ru.SUBSCRIPTION_EXPIRED.format(until=until)
+        # An expired customer deciding whether to renew is not told
+        # what they had unless this line says so too.
+        return ru.SUBSCRIPTION_EXPIRED.format(until=until) + devices
 
     text = ru.SUBSCRIPTION_ACTIVE.format(
         until=until, left=ru.format_left(subscription.expires_at, now)
@@ -46,7 +52,7 @@ def render_subscription(view, now) -> str:
         text += ru.SUBSCRIPTION_TRAFFIC.format(
             used=ru.format_traffic(view.info.traffic.total_bytes)
         )
-    text += ru.SUBSCRIPTION_DEVICES.format(devices=subscription.max_devices)
+    text += devices
     if view.is_provisioned:
         text += ru.SUBSCRIPTION_HINT
     return text
