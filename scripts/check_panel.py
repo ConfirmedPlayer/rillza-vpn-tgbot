@@ -35,6 +35,13 @@ SAMPLE_LIMIT = 50
 #: as opposed to "we reached the host and it said no".
 DNS_MARKERS = ('DNS', 'getaddrinfo', 'Name or service not known')
 
+#: Every maxDevices value the bot itself can ever write: 2 and 4 from
+#: the device-count tariffs, and 0 on a row the bot does not manage
+#: yet (a pre-migration subscription, waiting for the reconciler).
+#: -1 is not written by the bot at all — it is how the owner marks the
+#: hand-made unlimited accounts. Anything else was set by neither.
+KNOWN_LIMITS = {-1, 0, 2, 4}
+
 
 def _hint(error: PanelError, host: str) -> str | None:
     """Turn a transport failure into the next thing to try."""
@@ -116,7 +123,7 @@ async def main() -> int:
 
 
 async def _check_device_limit(client: CelerityClient, group_name: str) -> int:
-    """Report the group's configured cap, and who escapes it.
+    """Report the group's configured cap, and who does not consult it.
 
     The group's number is unreadable on its own — the list endpoint
     answers with ids and names only — so it is read off accounts, where
@@ -124,6 +131,12 @@ async def _check_device_limit(client: CelerityClient, group_name: str) -> int:
     *resolved* limit is not enough: an account carrying its own
     ``maxDevices`` never consults the group, so a single sample can say
     "no limit" while the group is set correctly. Hence both numbers.
+
+    An explicit ``maxDevices`` is the normal state for a bot-managed
+    account, not a red flag — the bot sets 2 or 4 on every one it
+    provisions. The real anomaly this can still catch without a
+    database is a value outside what the bot or a hand-made unlimited
+    account would ever write.
     """
     users, total = await client.iter_users(page=1, limit=SAMPLE_LIMIT)
     if not users:
@@ -156,23 +169,43 @@ async def _check_device_limit(client: CelerityClient, group_name: str) -> int:
         f'{_describe_limit(configured)}'
     )
 
-    overriding = [user for user in users if user.max_devices != 0]
+    explicit = [user for user in users if user.max_devices != 0]
     print(
         f'         {len(users)} of {total} account(s) sampled, '
-        f'{len(overriding)} with their own maxDevices'
+        f'{len(explicit)} with an explicit maxDevices'
     )
-    if overriding:
+    print(
+        '         that is expected, not an anomaly: the bot now sets '
+        'maxDevices\n'
+        '         explicitly (2 or 4) on every account it manages, so '
+        'the group\n'
+        '         limit above is only the fallback — for hand-made '
+        'accounts, and\n'
+        '         for rows from before this changed, until the '
+        'reconciler catches\n'
+        '         up. This script has no database access, so it cannot '
+        'tell\n'
+        "         whether one account's number is what its owner "
+        'actually paid\n'
+        '         for; that comparison runs continuously in the '
+        'reconciler\n'
+        '         (a mismatch shows up as devices_fixed in its report).'
+    )
+
+    unexpected = [u for u in users if u.max_devices not in KNOWN_LIMITS]
+    if unexpected:
         shown = ', '.join(
-            f'{user.user_id}({user.max_devices})' for user in overriding[:10]
+            f'{user.user_id}({user.max_devices})' for user in unexpected[:10]
         )
-        print(f'         overriding: {shown}')
         print(
-            '         an override wins over the group. Accounts the bot '
-            'creates carry\n'
-            '         maxDevices=0, so they inherit the group; set an '
-            'existing one to 0\n'
-            '         to pull it back under the group limit.'
+            f'[{FAIL}] devices: {len(unexpected)} account(s) carry a '
+            'maxDevices outside\n'
+            f'         {sorted(KNOWN_LIMITS)} — not a value the bot or a '
+            f'hand-made\n'
+            f'         unlimited account would ever set: {shown}'
         )
+        return 1
+
     if configured <= 0:
         print(
             '         note: the group enforces nothing at this value. Set '
