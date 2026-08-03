@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from loguru import logger
 
 from app.core.enums import SubscriptionOrigin, SubscriptionStatus
 from app.core.settings import Settings
@@ -307,3 +308,74 @@ async def test_provision_corrects_a_stale_device_limit(
     await subscriptions.provision(subscription)
 
     assert panel.users[str(USER_ID)].max_devices == 4
+
+
+async def test_provision_logs_when_the_panel_drops_the_device_limit(
+    uow, subscriptions, panel
+) -> None:
+    """A 200 from the panel is not proof ``maxDevices`` landed.
+
+    If the panel whitelists fields on the write, the create call would
+    still answer success while quietly keeping (or misreporting) the
+    old limit. Provisioning does not fail over this — the days are
+    already granted and the database stays the source of truth — so
+    the only thing left to check is that it logs loudly enough for an
+    operator to notice.
+
+    loguru does not feed pytest's caplog, so this captures its own
+    sink (see tests/contract/test_celerity_client.py).
+    """
+    panel.echo_max_devices = 2
+    subscription = await make_subscription(
+        uow, subscriptions, max_devices=4, provision=False
+    )
+
+    captured: list[str] = []
+    sink_id = logger.add(captured.append, level='ERROR')
+    try:
+        await subscriptions.provision(subscription)
+    finally:
+        logger.remove(sink_id)
+
+    assert any('maxDevices' in message for message in captured)
+
+
+async def test_push_state_logs_when_the_panel_drops_the_device_limit(
+    uow, subscriptions, panel
+) -> None:
+    """The same signal, for the renewal/reconcile path rather than a
+    fresh create: set_state answering 200 with an unchanged limit must
+    not pass for success either."""
+    subscription = await make_subscription(uow, subscriptions, max_devices=4)
+    panel.echo_max_devices = 2
+
+    captured: list[str] = []
+    sink_id = logger.add(captured.append, level='ERROR')
+    try:
+        await subscriptions.push_state(subscription)
+    finally:
+        logger.remove(sink_id)
+
+    assert any('maxDevices' in message for message in captured)
+
+
+async def test_push_state_recreates_an_account_removed_from_the_panel(
+    uow, subscriptions, panel
+) -> None:
+    """push_state's own PanelNotFoundError fallback, not reconcile's.
+
+    The reconciler routes a missing account through provision(), so it
+    never exercises this branch. A comment on it records that it once
+    "left the panel behind the database" — this pins it down directly
+    by calling extend() (which always calls push_state) after the
+    account has vanished.
+    """
+    subscription = await make_subscription(uow, subscriptions, max_devices=4)
+    panel.users.clear()
+
+    await subscriptions.extend(subscription, subscription.expires_at)
+
+    assert str(USER_ID) in panel.users
+    recreated = panel.users[str(USER_ID)]
+    assert recreated.max_devices == 4
+    assert recreated.expire_at == subscription.expires_at

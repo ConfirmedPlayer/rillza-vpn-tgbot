@@ -37,6 +37,17 @@ class FakePanel:
         self.info_traffic = Traffic(used=0, limit=0)
         #: Flip to model a node dropping out of every subscription.
         self.all_nodes_online = True
+        #: Set to make create/set_state echo this limit instead of the
+        #: one asked for — models a panel that silently whitelists
+        #: fields on the write and keeps (or misreports) the old value.
+        self.echo_max_devices: int | None = None
+
+    def _echoed(self, max_devices: int) -> int:
+        return (
+            max_devices
+            if self.echo_max_devices is None
+            else self.echo_max_devices
+        )
 
     def _guard(self, call: str) -> None:
         self.calls.append(call)
@@ -81,7 +92,7 @@ class FakePanel:
             enabled=True,
             expireAt=expire_at,
             trafficLimit=0,
-            maxDevices=max_devices,
+            maxDevices=self._echoed(max_devices),
             subscriptionToken=secrets.token_hex(8),
         )
         self.users[panel_user_id] = user
@@ -103,7 +114,7 @@ class FakePanel:
         updated = user.model_copy(
             update={
                 'expire_at': expire_at,
-                'max_devices': max_devices,
+                'max_devices': self._echoed(max_devices),
                 'enabled': True,
             }
         )

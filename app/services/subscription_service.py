@@ -23,7 +23,7 @@ from app.integrations.celerity import (
     PanelError,
     PanelNotFoundError,
 )
-from app.integrations.celerity.schemas import SubscriptionInfo
+from app.integrations.celerity.schemas import PanelUser, SubscriptionInfo
 from app.services.uow import UnitOfWork
 
 
@@ -121,6 +121,7 @@ class SubscriptionService:
                 subscription.expires_at,
                 subscription.max_devices,
             )
+        self._warn_if_devices_diverged(panel_user, subscription)
 
         now = utcnow()
         subscription.subscription_token = panel_user.subscription_token
@@ -186,12 +187,38 @@ class SubscriptionService:
                     subscription.expires_at,
                     subscription.max_devices,
                 )
+        self._warn_if_devices_diverged(panel_user, subscription)
         subscription.subscription_token = (
             panel_user.subscription_token or subscription.subscription_token
         )
         subscription.last_synced_at = utcnow()
         await self._uow.commit()
         return subscription
+
+    @staticmethod
+    def _warn_if_devices_diverged(
+        panel_user: PanelUser, subscription: Subscription
+    ) -> None:
+        """Notice a push whose device limit did not actually stick.
+
+        A 200 from the panel is not proof the field landed: if the
+        panel whitelists fields on a write, ``maxDevices`` can be
+        dropped silently while the call still succeeds. Nothing else
+        would catch that — provisioning and reconciling both read the
+        HTTP status, not the echoed body, as success. This only logs:
+        the database stays the source of truth and the days already
+        granted are not undone, so there is nothing here worth failing
+        the request over — it is a signal for the operator, not a
+        failure path.
+        """
+        if panel_user.max_devices != subscription.max_devices:
+            logger.error(
+                'Panel echoed maxDevices={} for user {} right after we '
+                'sent {} — it may be silently dropping the field',
+                panel_user.max_devices,
+                subscription.user_id,
+                subscription.max_devices,
+            )
 
     async def revoke(self, subscription: Subscription) -> Subscription:
         """Block new connections; the account and its history stay."""
