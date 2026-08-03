@@ -822,3 +822,42 @@ class TestReplyDuringAnotherAdminFlow:
         assert 'Скидка' in confirm[0]
         # Экранировано: иначе Telegram отвергнет разметку целиком.
         assert '&lt;b&gt;' in confirm[0]
+
+
+class TestACardWhoseBodyNeverArrived:
+    """Delivering a ticket is two calls: the context card, then a copy
+    of what the person actually wrote. Only after both succeed were
+    either of their ids recorded — so when the copy failed, the card was
+    already sitting in the admin's chat, addressing nothing.
+
+    That is the shape of the bug this project has already been bitten
+    by twice: the admin replies to a real card, is told nothing, and is
+    certain they have answered. The user never hears back.
+    """
+
+    async def test_a_reply_to_the_card_still_reaches_the_user(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        await open_support(dispatcher, bot)
+        session.requests.clear()
+        # The card lands; the copy of the message does not.
+        session.failing_methods = {CopyMessage}
+
+        await dispatcher.feed_update(bot, user_message('не подключается'))
+
+        assert texts_to(session, ADMIN_ID), 'the card itself should land'
+        # The user is told honestly that it did not go through.
+        assert any(
+            'Не получилось' in text for text in texts_to(session, CUSTOMER_ID)
+        )
+
+        ids = await card_ids(session_factory, CUSTOMER_ID)
+        assert len(ids) == 1, 'the card that did land must be routable'
+
+        session.failing_methods.clear()
+        session.requests.clear()
+        await dispatcher.feed_update(
+            bot, admin_reply('починили, попробуйте ещё раз', ids[0])
+        )
+
+        assert [c.chat_id for c in copies(session)] == [CUSTOMER_ID]

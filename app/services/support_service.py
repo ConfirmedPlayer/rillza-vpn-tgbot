@@ -57,7 +57,11 @@ class RelayOutcome(Enum):
     SENT = auto()
     BLOCKED = auto()
     TOO_FAST = auto()
-    #: No admin could be reached — the message is stored, not lost.
+    #: No admin could be reached. The user is told to try again, and
+    #: that is all: what they wrote is NOT stored anywhere. Keeping it
+    #: would mean recording the coordinates of their original message,
+    #: which the schema has no room for — an open decision, not an
+    #: oversight. This comment used to claim the opposite.
     UNDELIVERED = auto()
 
 
@@ -127,18 +131,32 @@ class SupportService:
                 card,
                 reply_markup=keyboards.support_card(telegram_id),
             )
-            copy = await self._bot.copy_message(
-                chat_id=admin_id, from_chat_id=chat_id, message_id=message_id
-            )
         except TelegramAPIError as error:
             logger.warning(
                 'Support delivery to admin {} failed: {}', admin_id, error
             )
             return False
 
-        self._remember(
-            telegram_id, admin_id, header.message_id, copy.message_id
-        )
+        # Record the card the moment it exists, not once both calls have
+        # succeeded. Replies route by the id of the message being
+        # replied to, so a card whose body failed to copy must still
+        # route: otherwise it sits in the admin's chat addressing
+        # nothing, they answer it, and the answer vanishes with no sign
+        # to either side. This delivery still counts as failed — the
+        # user is told to try again, because the admin cannot see what
+        # they wrote — but the card is not left dangling.
+        self._remember(telegram_id, admin_id, header.message_id)
+        try:
+            copy = await self._bot.copy_message(
+                chat_id=admin_id, from_chat_id=chat_id, message_id=message_id
+            )
+        except TelegramAPIError as error:
+            logger.warning(
+                'Support copy to admin {} failed: {}', admin_id, error
+            )
+            return False
+
+        self._remember(telegram_id, admin_id, copy.message_id)
         return True
 
     # --- a request the bot composed on the user's behalf --------------
@@ -189,16 +207,24 @@ class SupportService:
                 card,
                 reply_markup=keyboards.support_card(telegram_id),
             )
-            body = await self._bot.send_message(admin_id, text)
         except TelegramAPIError as error:
             logger.warning(
                 'Composed delivery to admin {} failed: {}', admin_id, error
             )
             return False
 
-        self._remember(
-            telegram_id, admin_id, header.message_id, body.message_id
-        )
+        # See _deliver_to_admin: a card that landed has to be routable
+        # even if the body after it did not.
+        self._remember(telegram_id, admin_id, header.message_id)
+        try:
+            body = await self._bot.send_message(admin_id, text)
+        except TelegramAPIError as error:
+            logger.warning(
+                'Composed body to admin {} failed: {}', admin_id, error
+            )
+            return False
+
+        self._remember(telegram_id, admin_id, body.message_id)
         return True
 
     def _remember(

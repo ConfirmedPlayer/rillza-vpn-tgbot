@@ -12,7 +12,7 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.methods import CopyMessage, SendMessage, TelegramMethod
 from aiogram.types import Chat, Message, MessageId, User
 
@@ -31,6 +31,10 @@ class RecordingSession(BaseSession):
         #: Same, but only for these chats — so a test can block one
         #: side of a conversation without blocking the other.
         self.forbidden_chats: set[int] = set()
+        #: Method classes that answer with an error. Delivering a
+        #: support card takes two calls, and a test needs the second to
+        #: fail while the first has already landed.
+        self.failing_methods: set[type[TelegramMethod[Any]]] = set()
 
     async def make_request(
         self, bot: Bot, method: TelegramMethod[Any], timeout: int | None = None
@@ -42,6 +46,10 @@ class RecordingSession(BaseSession):
         ):
             raise TelegramForbiddenError(
                 method=method, message='bot was blocked by the user'
+            )
+        if type(method) in self.failing_methods:
+            raise TelegramBadRequest(
+                method=method, message='forced failure for this test'
             )
         if isinstance(method, CopyMessage):
             # copy_message answers with the new message's id only.
