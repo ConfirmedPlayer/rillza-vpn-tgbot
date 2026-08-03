@@ -32,10 +32,15 @@ pytestmark = pytest.mark.skipif(
 )
 
 SEED_TARIFFS = (
-    ('m1', '1 месяц', 30, 20_000, 1),
-    ('m3', '3 месяца', 90, 54_000, 2),
-    ('m6', '6 месяцев', 180, 96_000, 3),
-    ('m12', '12 месяцев', 365, 168_000, 4),
+    # code, title, days, price in kopeks, devices, order
+    ('m1', '1 месяц', 30, 20_000, 2, 1),
+    ('m3', '3 месяца', 90, 54_000, 2, 2),
+    ('m6', '6 месяцев', 180, 96_000, 2, 3),
+    ('m12', '12 месяцев', 365, 168_000, 2, 4),
+    ('m1x4', '1 месяц', 30, 32_000, 4, 5),
+    ('m3x4', '3 месяца', 90, 86_400, 4, 6),
+    ('m6x4', '6 месяцев', 180, 153_600, 4, 7),
+    ('m12x4', '12 месяцев', 365, 268_800, 4, 8),
 )
 
 
@@ -79,16 +84,21 @@ async def session(uow: UnitOfWork) -> AsyncSession:
 
 @pytest_asyncio.fixture
 async def seeded_tariffs(uow: UnitOfWork) -> list[Tariff]:
-    """The four tariffs the seed migration installs."""
+    """The eight tariffs the seed migrations install.
+
+    Order matters: existing tests index the two-device plans by
+    position, so the four-device ones are appended, never interleaved.
+    """
     tariffs = [
         Tariff(
             code=code,
             title_ru=title,
             duration_days=days,
             price_kopeks=price,
+            max_devices=devices,
             sort_order=order,
         )
-        for code, title, days, price, order in SEED_TARIFFS
+        for code, title, days, price, devices, order in SEED_TARIFFS
     ]
     uow.session.add_all(tariffs)
     await uow.commit()

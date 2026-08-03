@@ -135,6 +135,10 @@ class TestTariffs:
             ('m3', 54_000),
             ('m6', 96_000),
             ('m12', 168_000),
+            ('m1x4', 32_000),
+            ('m3x4', 86_400),
+            ('m6x4', 153_600),
+            ('m12x4', 268_800),
         ]
 
     async def test_monthly_price_shows_the_discount(
@@ -158,7 +162,7 @@ class TestTariffs:
         active = [t.code for t in await uow.tariffs.list_active()]
         listed = [t.code for t in await uow.tariffs.list_all()]
 
-        assert active == ['m1', 'm12']
+        assert active == ['m1', 'm12', 'm1x4', 'm3x4', 'm6x4', 'm12x4']
         assert 'm6' not in listed
 
     async def test_code_is_unique(
@@ -403,3 +407,18 @@ class TestPayments:
                     await contender.payments.lock_for_finalize(payment.id)
                     is None
                 )
+
+
+async def test_seeded_tariffs_carry_a_device_count(
+    uow: UnitOfWork, seeded_tariffs
+) -> None:
+    """Four-device plans sit next to the existing ones, same durations."""
+    two = await uow.tariffs.get_by_code('m1')
+    four = await uow.tariffs.get_by_code('m1x4')
+
+    assert two is not None
+    assert four is not None
+    assert two.max_devices == 2
+    assert four.max_devices == 4
+    assert four.duration_days == two.duration_days
+    assert four.price_kopeks == 32_000

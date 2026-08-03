@@ -85,6 +85,11 @@ class Tariff(Base, TimestampMixin):
     code: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
     title_ru: Mapped[str] = mapped_column(String(64), nullable=False)
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 2 or 4. The panel is told this number explicitly instead of the
+    # inherit-from-group 0, so what was sold is what it enforces.
+    max_devices: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=2, server_default='2'
+    )
     # Kopeks: integer money only, never floats.
     price_kopeks: Mapped[int] = mapped_column(Integer, nullable=False)
     sort_order: Mapped[int] = mapped_column(
@@ -134,6 +139,11 @@ class Subscription(Base, TimestampMixin):
     )
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    # What the buyer paid for. Pushed to the panel as an explicit
+    # number, so the account stops following the group's limit.
+    max_devices: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=2, server_default='2'
     )
     # CELERITY user id — always str(telegram_id).
     panel_user_id: Mapped[str] = mapped_column(String(32), nullable=False)
