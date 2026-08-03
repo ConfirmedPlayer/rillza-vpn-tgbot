@@ -303,6 +303,13 @@ class PaymentService:
             subscription.status = SubscriptionStatus.ACTIVE
             # A renewal restarts the reminder cycle.
             subscription.notified_stage = None
+            # The device count follows the newest purchase, not the
+            # last payment to be applied — see the repository method.
+            newest = await self._uow.payments.newest_applied_created_at(
+                payment.user_id, exclude=payment.id
+            )
+            if newest is None or payment.created_at >= newest:
+                subscription.max_devices = tariff.max_devices
 
         # One transaction: the days and the latch land together, so a
         # crash between them cannot leave days granted with nothing to

@@ -597,3 +597,69 @@ class TestTheRowExistsBeforeTheProviderDoes:
         assert payment.status == PaymentStatus.PENDING
         assert payment.invoice_url
         assert payment.provider_invoice_id == f'inv-{payment.id}'
+
+
+class TestDeviceCount:
+    async def test_a_purchase_sets_the_device_count(
+        self, payments, provider, uow, panel, seeded_tariffs
+    ) -> None:
+        """A four-device plan reaches both the row and the panel."""
+        tariff = await uow.tariffs.get_by_code('m1x4')
+        assert tariff is not None
+        payment = await payments.create_invoice(USER_ID, tariff, 'yoomoney')
+        provider.mark_paid(payment.id)
+
+        await payments.check_and_finalize(payment.id)
+
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        assert subscription.max_devices == 4
+        assert panel.users[str(USER_ID)].max_devices == 4
+
+    async def test_a_late_payment_does_not_undo_a_newer_count(
+        self, payments, provider, uow, seeded_tariffs
+    ) -> None:
+        """Days add up whatever the order; a device count is assigned.
+
+        A two-device invoice that was replaced by a four-device
+        purchase and then arrived late through the sweep must not take
+        the buyer back down to two.
+        """
+        two = await uow.tariffs.get_by_code('m1')
+        four = await uow.tariffs.get_by_code('m1x4')
+        assert two is not None and four is not None
+        old = await payments.create_invoice(USER_ID, two, 'yoomoney')
+        new = await payments.create_invoice(USER_ID, four, 'yoomoney')
+        provider.mark_paid(old.id)
+        provider.mark_paid(new.id)
+
+        # The four-device purchase lands first, the older money later.
+        await payments.check_and_finalize(new.id)
+        await payments.check_and_finalize(old.id)
+
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        assert subscription.max_devices == 4
+        # The days still add up: both payments counted.
+        assert subscription.expires_at > datetime.now(UTC) + timedelta(
+            days=two.duration_days + four.duration_days - 1
+        )
+
+    async def test_an_explicit_downgrade_lowers_the_count(
+        self, payments, provider, uow, seeded_tariffs
+    ) -> None:
+        """The guard above must not block a deliberate downgrade."""
+        four = await uow.tariffs.get_by_code('m1x4')
+        two = await uow.tariffs.get_by_code('m1')
+        assert four is not None and two is not None
+
+        first = await payments.create_invoice(USER_ID, four, 'yoomoney')
+        provider.mark_paid(first.id)
+        await payments.check_and_finalize(first.id)
+        second = await payments.create_invoice(USER_ID, two, 'yoomoney')
+        provider.mark_paid(second.id)
+        await payments.check_and_finalize(second.id)
+
+        subscription = await uow.subscriptions.get_by_user(USER_ID)
+        assert subscription is not None
+        assert subscription.max_devices == 2

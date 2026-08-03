@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import Update, select, update
+from sqlalchemy import Update, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import PaymentStatus
@@ -216,3 +216,31 @@ class PaymentsRepository:
             .limit(limit)
         )
         return result.scalars().all()
+
+    async def newest_applied_created_at(
+        self, user_id: int, exclude: uuid.UUID
+    ) -> datetime | None:
+        """When this user's newest *applied* payment was invoiced.
+
+        The device count is an assignment, not an addition, so unlike
+        days it cannot be made order-independent: a payment swept up as
+        late as seven days after the fact would write its own tariff's
+        count over a newer purchase's.
+
+        Ordered by ``created_at``, not ``paid_at``. ``paid_at`` records
+        when the money was *noticed*, so late money carries a later
+        stamp than the purchase that superseded it — sorting by it
+        would invert exactly the case this guards. ``created_at`` is
+        when the invoice was raised, which is the order the buyer
+        pressed the buttons in.
+
+        Covered by ix_payments_user_id_created_at.
+        """
+        result = await self._session.execute(
+            select(func.max(Payment.created_at)).where(
+                Payment.user_id == user_id,
+                Payment.days_applied_at.is_not(None),
+                Payment.id != exclude,
+            )
+        )
+        return result.scalar_one_or_none()
