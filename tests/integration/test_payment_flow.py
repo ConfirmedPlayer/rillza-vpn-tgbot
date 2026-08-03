@@ -666,3 +666,117 @@ class TestDeviceCount:
         # A count that moved in the row but never reached the panel
         # would still pass the assertion above.
         assert panel.users[str(USER_ID)].max_devices == 2
+
+
+class TestAStalePushCannotInstallAnOlderCount:
+    """The locks are gone by the time the panel is called.
+
+    ``_apply_days`` commits — releasing the advisory lock and the row
+    lock — and only then does ``_provision`` make its HTTP call, using
+    the object it was handed. Another payment for the same user can
+    commit a newer device count inside that gap, and the two pushes then
+    race on the wire with nothing ordering them. The database stays
+    right; the panel ends up enforcing the older number, which is the
+    part the customer can actually feel.
+
+    Sessions are built with ``expire_on_commit=False``, so the held copy
+    keeps its loaded values and gives no sign of being behind. Both
+    branches ``_provision`` can take are pinned here: push_state when
+    the copy already has a token, provision when it does not.
+    """
+
+    async def _two_invoices(
+        self, session_factory, panel, provider, registry, app_settings
+    ) -> tuple:
+        async with UnitOfWork(session_factory) as setup:
+            await setup.users.upsert(USER_ID)
+            two = await setup.tariffs.get_by_code('m1')
+            four = await setup.tariffs.get_by_code('m1x4')
+            assert two is not None and four is not None
+            service = build_service(setup, panel, registry, app_settings)
+            old = await service.create_invoice(USER_ID, two, 'yoomoney')
+            new = await service.create_invoice(USER_ID, four, 'yoomoney')
+            await setup.commit()
+            old_id, new_id = old.id, new.id
+        provider.mark_paid(old_id)
+        provider.mark_paid(new_id)
+        return old_id, new_id
+
+    async def test_push_state_sends_the_row_not_the_held_copy(
+        self,
+        session_factory,
+        panel,
+        provider,
+        registry,
+        app_settings,
+        seeded_tariffs,
+    ) -> None:
+        old_id, new_id = await self._two_invoices(
+            session_factory, panel, provider, registry, app_settings
+        )
+        async with UnitOfWork(session_factory) as worker:
+            await build_service(
+                worker, panel, registry, app_settings
+            ).check_and_finalize(old_id)
+            held = await worker.subscriptions.get_by_user(USER_ID)
+            assert held is not None and held.max_devices == 2
+
+            # The four-device purchase is finalised end to end meanwhile.
+            async with UnitOfWork(session_factory) as other:
+                await build_service(
+                    other, panel, registry, app_settings
+                ).check_and_finalize(new_id)
+            assert panel.users[str(USER_ID)].max_devices == 4
+
+            # Only now does the first call reach its own HTTP request.
+            await SubscriptionService(worker, panel, app_settings).push_state(
+                held
+            )
+
+        assert panel.users[str(USER_ID)].max_devices == 4
+
+    async def test_provision_sends_the_row_not_the_held_copy(
+        self,
+        session_factory,
+        panel,
+        provider,
+        registry,
+        app_settings,
+        seeded_tariffs,
+    ) -> None:
+        """The same gap, on the branch taken when no token is held yet.
+
+        A first purchase whose panel call failed leaves the copy with
+        ``subscription_token = None``, so _provision goes to provision()
+        rather than push_state() — the account exists by then, created
+        by the other payment, and the values have to come from the row.
+        """
+        old_id, new_id = await self._two_invoices(
+            session_factory, panel, provider, registry, app_settings
+        )
+        async with UnitOfWork(session_factory) as worker:
+            panel.offline = True
+            await build_service(
+                worker, panel, registry, app_settings
+            ).check_and_finalize(old_id)
+            panel.offline = False
+            held = await worker.subscriptions.get_by_user(USER_ID)
+            assert held is not None
+            assert held.max_devices == 2
+            assert held.subscription_token is None
+
+            async with UnitOfWork(session_factory) as other:
+                await build_service(
+                    other, panel, registry, app_settings
+                ).check_and_finalize(new_id)
+            assert panel.users[str(USER_ID)].max_devices == 4
+
+            await SubscriptionService(worker, panel, app_settings).provision(
+                held
+            )
+
+        async with UnitOfWork(session_factory) as check:
+            subscription = await check.subscriptions.get_by_user(USER_ID)
+            assert subscription is not None
+            assert subscription.max_devices == 4
+        assert panel.users[str(USER_ID)].max_devices == 4

@@ -115,7 +115,15 @@ class SubscriptionService:
 
         Safe to call repeatedly: an existing panel account is reused and
         its expiry and device limit are set to the stored values.
+
+        Re-read first, for the reason spelled out in :meth:`push_state`:
+        the caller's copy was loaded before the locks were released, and
+        this is the branch taken when that copy has no token yet — a
+        first purchase whose panel call failed. By the time it retries,
+        another payment may have created the account and moved the row
+        on, and the stored values, not the held ones, are the answer.
         """
+        await self._uow.session.refresh(subscription)
         panel_user, created = await self._panel.create_or_get_user(
             subscription.panel_user_id,
             expire_at=subscription.expires_at,
@@ -176,7 +184,23 @@ class SubscriptionService:
         Sends the subscription's own values rather than any caller-held
         ones, so a retry can never install an outdated expiry or an
         outdated device limit.
+
+        Re-read first, because "the object the caller is holding" and
+        "the row" are not the same thing here. ``_apply_days`` commits —
+        which releases both the advisory lock and the row lock — and
+        only then does ``_provision`` reach this call, so another
+        payment for the same user can commit a newer device count in
+        between. Sessions are built with ``expire_on_commit=False``, so
+        the caller's copy keeps the values it was loaded with and says
+        nothing about being behind.
+
+        This narrows the window rather than closing it: two writers can
+        still both re-read, and then land on the wire in the other
+        order. Ordering the HTTP calls themselves would mean holding a
+        database lock across a live request to the panel, which is a
+        worse trade. The reconciler stays the backstop.
         """
+        await self._uow.session.refresh(subscription)
         try:
             panel_user = await self._panel.set_state(
                 subscription.panel_user_id,
