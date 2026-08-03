@@ -103,6 +103,7 @@ SOMETHING_WENT_WRONG = (
 SUPPORT_PLACEHOLDER = (
     'Раздел поддержки скоро откроется. Пока напишите администратору напрямую.'
 )
+SUPPORT_REQUEST_SENT = '✅ Отправили вопрос в поддержку. Ответ придёт сюда же.'
 
 
 def format_date(moment: datetime) -> str:

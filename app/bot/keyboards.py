@@ -30,6 +30,11 @@ RENEW = 'renew'
 SUPPORT_LEAVE = 'support:leave'
 SUPPORT_BLOCK_PREFIX = 'support:block:'
 SUPPORT_UNBLOCK_PREFIX = 'support:unblock:'
+#: Bare — "I want more devices", from the subscription screen.
+#: With a ``:{chosen}`` suffix — "I am about to buy fewer", from the
+#: downgrade warning. One handler, two questions, because the person
+#: asking has not bought anything yet in the second case.
+SUPPORT_DEVICES = 'support:devices'
 
 ADMIN_MENU = 'admin'
 ADMIN_STATS = 'admin:stats'
@@ -82,6 +87,11 @@ def subscription(url: str | None) -> InlineKeyboardMarkup:
         )
     builder.row(
         InlineKeyboardButton(text='📖 Как подключить', callback_data=GUIDE)
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text='💬 Нужно больше устройств', callback_data=SUPPORT_DEVICES
+        )
     )
     builder.row(
         InlineKeyboardButton(text='↩️ Главное меню', callback_data=MENU)
@@ -149,6 +159,10 @@ def devices_downgrade(chosen: int, current: int) -> InlineKeyboardMarkup:
     builder.button(
         text=f'👥 Смотреть тарифы до {current} устройств',
         callback_data=f'{DEVICES_PREFIX}{current}',
+    )
+    builder.button(
+        text='💬 Спросить в поддержке',
+        callback_data=f'{SUPPORT_DEVICES}:{chosen}',
     )
     builder.button(text='↩️ Назад', callback_data=BUY)
     builder.adjust(1)

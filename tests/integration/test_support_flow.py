@@ -1,6 +1,6 @@
 """Anonymous support: relaying, reply routing, anonymity and abuse."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -14,6 +14,7 @@ from aiogram.methods import (
 )
 from aiogram.types import CallbackQuery, Chat, Message, Update
 from aiogram.types import User as TelegramUser
+from sqlalchemy import select
 
 from app.bot import keyboards
 from app.core.enums import SubscriptionOrigin, SupportDirection
@@ -600,3 +601,105 @@ async def test_typing_outside_the_flow_gets_an_answer(
     await dispatcher.feed_update(bot, user_message('привет'))
 
     assert any('кнопки' in text for text in texts_to(session, CUSTOMER_ID))
+
+
+class TestComposedRequest:
+    async def test_it_reaches_the_admin_and_routes_back(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        """The canned request has no user message to copy, so it goes
+        as a composed send — and a reply to it must still find its way
+        back, which means the SupportMessage rows have to be written."""
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.SUPPORT_DEVICES)
+        )
+
+        assert any('устройств' in text for text in texts_to(session, ADMIN_ID))
+        # Nothing was copied: there was no user message to copy.
+        assert copies(session) == []
+
+        async with UnitOfWork(session_factory) as uow:
+            rows = (
+                (
+                    await uow.session.execute(
+                        select(SupportMessage).where(
+                            SupportMessage.user_id == CUSTOMER_ID
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            # The card and the body: replying to either must route.
+            assert len(rows) == 2
+            assert {row.direction for row in rows} == {SupportDirection.IN}
+
+    async def test_it_respects_the_support_block(
+        self, dispatcher, bot, session, session_factory
+    ) -> None:
+        async with UnitOfWork(session_factory) as uow:
+            await uow.users.upsert(CUSTOMER_ID)
+            await uow.users.set_support_blocked(CUSTOMER_ID, datetime.now(UTC))
+            await uow.commit()
+        session.requests.clear()
+
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.SUPPORT_DEVICES)
+        )
+
+        assert texts_to(session, ADMIN_ID) == []
+        assert any('отключены' in alert for alert in alerts(session))
+
+    async def test_the_downgrade_flavour_names_both_numbers(
+        self,
+        dispatcher,
+        bot,
+        session,
+        session_factory,
+        panel,
+        settings_with_admin,
+    ) -> None:
+        """From the warning screen nothing has been bought yet, so the
+        ticket asks how to proceed rather than "I need more"."""
+        async with UnitOfWork(session_factory) as uow:
+            await uow.users.upsert(CUSTOMER_ID)
+            await uow.commit()
+            subscriptions = SubscriptionService(
+                uow, panel, settings_with_admin
+            )
+            subscription = await subscriptions.create_pending(
+                CUSTOMER_ID,
+                expires_at=datetime.now(UTC) + timedelta(days=59),
+                origin=SubscriptionOrigin.PURCHASE,
+                max_devices=4,
+            )
+            await subscriptions.provision(subscription)
+        session.requests.clear()
+
+        await dispatcher.feed_update(
+            bot, callback_update(f'{keyboards.SUPPORT_DEVICES}:2')
+        )
+
+        body = texts_to(session, ADMIN_ID)[-1]
+        assert 'до 2 устройств' in body
+        assert 'до 4' in body
+
+    async def test_it_is_rate_limited(
+        self, settings_with_admin, session_factory, panel, bot, session
+    ) -> None:
+        """Otherwise the button is a way around the typing limit."""
+        dispatcher = build_dispatcher(
+            settings_with_admin,
+            session_factory,
+            panel,
+            PaymentRegistry({}),
+            storage=MemoryStorage(),
+            limiter=DenyingLimiter(),
+        )
+
+        await dispatcher.feed_update(
+            bot, callback_update(keyboards.SUPPORT_DEVICES)
+        )
+
+        assert texts_to(session, ADMIN_ID) == []
+        assert any('Слишком много' in alert for alert in alerts(session))

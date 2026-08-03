@@ -132,9 +132,76 @@ class SupportService:
             )
             return False
 
-        # Replying to either the card or the copy must route back, so
-        # both ids point at the same user.
-        for admin_message_id in (header.message_id, copy.message_id):
+        self._remember(
+            telegram_id, admin_id, header.message_id, copy.message_id
+        )
+        return True
+
+    # --- a request the bot composed on the user's behalf --------------
+
+    async def relay_composed(self, telegram_id: int, text: str) -> RelayResult:
+        """File a ticket the bot wrote on the user's behalf.
+
+        ``relay_from_user`` copies a message the user actually sent;
+        a canned request has none. It travels as a plain send instead,
+        which is safe in this direction: forwarding is banned because
+        it would name the owner when *answering*, and the admin card
+        already names the person writing in.
+
+        Everything else is the same gate: the support block, the rate
+        limiter — otherwise the button becomes a way around it — and
+        the same SupportMessage rows, so replies route by reply.
+        """
+        user = await self._uow.users.get(telegram_id)
+        if user is not None and user.support_blocked:
+            return RelayResult(RelayOutcome.BLOCKED)
+
+        allowed = await self._limiter.allow(
+            f'support:{telegram_id}', RATE_LIMIT, RATE_WINDOW_SECONDS
+        )
+        if not allowed:
+            return RelayResult(RelayOutcome.TOO_FAST)
+
+        card = await self._render_card(telegram_id)
+        delivered = 0
+        for admin_id in self._settings.admin_ids:
+            if await self._deliver_composed(admin_id, telegram_id, card, text):
+                delivered += 1
+
+        await self._uow.commit()
+        if delivered == 0:
+            logger.warning(
+                'Composed request from {} reached no admin', telegram_id
+            )
+            return RelayResult(RelayOutcome.UNDELIVERED)
+        return RelayResult(RelayOutcome.SENT, delivered)
+
+    async def _deliver_composed(
+        self, admin_id: int, telegram_id: int, card: str, text: str
+    ) -> bool:
+        try:
+            header = await self._bot.send_message(
+                admin_id,
+                card,
+                reply_markup=keyboards.support_card(telegram_id),
+            )
+            body = await self._bot.send_message(admin_id, text)
+        except TelegramAPIError as error:
+            logger.warning(
+                'Composed delivery to admin {} failed: {}', admin_id, error
+            )
+            return False
+
+        self._remember(
+            telegram_id, admin_id, header.message_id, body.message_id
+        )
+        return True
+
+    def _remember(
+        self, telegram_id: int, admin_id: int, *message_ids: int
+    ) -> None:
+        """Replying to any of these must route back to the same user."""
+        for admin_message_id in message_ids:
             self._uow.session.add(
                 SupportMessage(
                     user_id=telegram_id,
@@ -143,7 +210,6 @@ class SupportService:
                     direction=SupportDirection.IN,
                 )
             )
-        return True
 
     async def _render_card(self, telegram_id: int) -> str:
         user = await self._uow.users.get(telegram_id)
