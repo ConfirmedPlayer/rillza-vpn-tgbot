@@ -18,12 +18,13 @@ docs/SETUP.md.
 
 import asyncio
 import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.jobs import HEALTHCHECK_QUIET
+from app.core.jobs import HEALTHCHECK_QUIET, stale_after
 from app.core.settings import get_settings
 from app.db.engine import build_engine
 from app.db.models import JobHeartbeat
@@ -49,18 +50,61 @@ def is_alive(latest: datetime | None, now: datetime) -> bool:
     return now - latest < HEALTHCHECK_QUIET
 
 
+async def all_heartbeats(session: AsyncSession) -> Sequence[JobHeartbeat]:
+    result = await session.execute(select(JobHeartbeat))
+    return result.scalars().all()
+
+
+def stalled(beats: Sequence[JobHeartbeat], now: datetime) -> list[str]:
+    """Jobs that were running and then stopped, past their own threshold.
+
+    :func:`is_alive` asks whether the event loop turns at all, and takes
+    the freshest heartbeat of any job to answer it. That is the right
+    question for a hang, and the wrong one for a single job that keeps
+    failing: the two fastest jobs tick every 30 and 60 seconds and
+    neither touches the panel, so they hold the container green while
+    provisioning and reconciliation fail on every pass. Unattended,
+    nothing else would say so.
+
+    A job with no heartbeat at all is deliberately not stale — it has
+    not had its first run yet, which compose covers with start_period.
+    Counting it would make every container unhealthy for the minutes
+    between boot and the slower jobs' first runs.
+
+    The threshold is each job's own: :func:`stale_after` allows two
+    missed runs, so a four-hourly reconciler is not called dead at four
+    hours and one second.
+    """
+    return sorted(
+        beat.job_name
+        for beat in beats
+        if beat.last_success_at is not None
+        and now - beat.last_success_at > stale_after(beat.job_name)
+    )
+
+
 async def _check() -> int:
     engine = build_engine(get_settings())
     try:
         async with AsyncSession(engine) as session:
-            latest = await latest_success(session)
+            beats = await all_heartbeats(session)
     finally:
         await engine.dispose()
 
-    if is_alive(latest, datetime.now(UTC)):
-        return 0
-    print(f'scheduler quiet since {latest}', file=sys.stderr)
-    return 1
+    now = datetime.now(UTC)
+    latest = max(
+        (b.last_success_at for b in beats if b.last_success_at is not None),
+        default=None,
+    )
+    if not is_alive(latest, now):
+        print(f'scheduler quiet since {latest}', file=sys.stderr)
+        return 1
+
+    stale = stalled(beats, now)
+    if stale:
+        print(f'jobs stopped running: {", ".join(stale)}', file=sys.stderr)
+        return 1
+    return 0
 
 
 def main() -> int:
