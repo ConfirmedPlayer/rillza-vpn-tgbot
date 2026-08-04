@@ -209,6 +209,10 @@ def register_jobs(scheduler: AsyncIOScheduler, runner: JobRunner) -> None:
         BROADCAST_RESUMER: timedelta(minutes=1),
         RECONCILER: timedelta(minutes=2),
         EXPIRY_NOTIFIER: timedelta(minutes=3),
+        # Its own interval is ten minutes, which is past FIRST_RUN_LATEST
+        # and would leave the healthcheck judging a job that had not had
+        # its turn yet.
+        EXPIRY_SYNC: timedelta(minutes=4),
         LATE_PAYMENT_SWEEP: timedelta(minutes=5),
     }
     actions = {

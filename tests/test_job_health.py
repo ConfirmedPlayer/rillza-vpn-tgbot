@@ -1,9 +1,11 @@
 """Operational guards that are cheap to state and expensive to lose."""
 
+import pathlib
+import re
 from datetime import UTC, datetime, timedelta
 
 from app.bot.texts.admin import render_stats
-from app.core.jobs import JOB_INTERVALS
+from app.core.jobs import FIRST_RUN_LATEST, JOB_INTERVALS
 from app.db.models import JobHeartbeat
 from app.scheduler.jobs import LATE_PAYMENT_SWEEP, PAYMENT_POLLER, RECONCILER
 from app.services.broadcast_service import STALE_AFTER
@@ -85,12 +87,6 @@ def test_every_job_is_registered_with_the_declared_interval() -> None:
         assert jobs[name].max_instances == 1
 
 
-#: How long a job may wait for its first run after a restart. The
-#: existing staggering — one, two and five minutes — is the standard
-#: this holds everything else to.
-FIRST_RUN_CAP = timedelta(minutes=10)
-
-
 async def test_a_restart_does_not_park_a_job_for_a_whole_interval() -> None:
     """An interval trigger with no explicit first run starts counting at
     boot, so every restart pushes that job a full interval away. The bot
@@ -98,8 +94,8 @@ async def test_a_restart_does_not_park_a_job_for_a_whole_interval() -> None:
     notifier sat an hour out after every start, and a container recreated
     more often than that would never have reminded anybody at all.
 
-    The three long jobs already carry an explicit first run. This is the
-    rule they follow, written down so the next job added follows it too.
+    The bound is FIRST_RUN_LATEST rather than a number chosen here,
+    because the healthcheck depends on the same one — see the test below.
     """
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -112,13 +108,38 @@ async def test_a_restart_does_not_park_a_job_for_a_whole_interval() -> None:
     try:
         now = datetime.now(UTC)
         for job in scheduler.get_jobs():
-            allowed = min(JOB_INTERVALS[job.id], FIRST_RUN_CAP)
+            allowed = min(JOB_INTERVALS[job.id], FIRST_RUN_LATEST)
             delay = job.next_run_time - now
             assert delay <= allowed, (
                 f'{job.id} first runs {delay} after a restart'
             )
     finally:
         scheduler.shutdown(wait=False)
+
+
+def test_start_period_outlasts_the_slowest_first_run() -> None:
+    """The healthcheck and compose share one number, in two files.
+
+    The check reports a job that ran and then went quiet past its own
+    stale_after(). After downtime longer than that — a night with the
+    laptop shut, a pause between deployments — every heartbeat is
+    already stale at boot, before the scheduler has done anything wrong.
+    start_period is what keeps the container "starting" rather than
+    "unhealthy" until each job has had its first run.
+
+    Lose that and a host watchdog (docs/SETUP.md suggests autoheal)
+    restarts the container at the end of start_period, just before the
+    slow jobs would have run — and it never gets any further.
+    """
+    compose = pathlib.Path(__file__).resolve().parents[1] / 'compose.yaml'
+    match = re.search(r'start_period:\s*(\d+)s', compose.read_text())
+
+    assert match is not None, 'the bot service lost its start_period'
+    start_period = timedelta(seconds=int(match.group(1)))
+    assert start_period > FIRST_RUN_LATEST, (
+        f'start_period {start_period} does not outlast the slowest '
+        f'first run {FIRST_RUN_LATEST}'
+    )
 
 
 def test_a_live_broadcast_cannot_be_stolen_by_the_resumer() -> None:

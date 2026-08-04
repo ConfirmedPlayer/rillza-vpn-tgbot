@@ -30,7 +30,14 @@ services:
       interval: 60s
       timeout: 15s
       retries: 3
-      start_period: 180s
+      # Must outlast the slowest first run (FIRST_RUN_LATEST in
+      # app/core/jobs.py). The check reports a job that went quiet past
+      # its own threshold, and after downtime longer than that every
+      # heartbeat is stale at boot before the scheduler has done
+      # anything wrong. Judging it then would have a host watchdog
+      # restart the container just before the slow jobs' first runs,
+      # for ever. tests/test_job_health.py pins the two together.
+      start_period: 420s
     depends_on:
       postgres:
         condition: service_healthy

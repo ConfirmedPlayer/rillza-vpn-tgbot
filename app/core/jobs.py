@@ -49,6 +49,22 @@ def stale_after(job_name: str) -> timedelta:
     return max(interval * MISSED_RUNS_BEFORE_STALE, MIN_STALE_AFTER)
 
 
+#: The latest any job may have its first run after a start. Two things
+#: depend on this number together, and they must not drift apart.
+#:
+#: The healthcheck reports a job that ran and then went quiet past its
+#: own :func:`stale_after`. After downtime longer than that — a night
+#: with the laptop shut, a pause between deployments — every heartbeat
+#: in the database is already stale at boot, through no fault of the
+#: scheduler. So compose's ``start_period`` has to outlast the slowest
+#: first run: until then the container is "starting", not "unhealthy",
+#: and by the time it is judged, every job has run once in this process.
+#:
+#: Get this wrong and a host watchdog restarts the container at the end
+#: of start_period, before the slow jobs have run — and it never gets
+#: further. tests/test_job_health.py pins both halves.
+FIRST_RUN_LATEST = timedelta(minutes=5)
+
 #: How long every job may be silent before the container calls itself
 #: unhealthy. Deliberately tighter than :func:`stale_after`, which keeps
 #: an admin screen from flapping between ✅ and ⚠️; this one answers a
