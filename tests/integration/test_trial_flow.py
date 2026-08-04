@@ -113,7 +113,7 @@ class TestMenu:
     ) -> None:
         await dispatcher.feed_update(bot, message_update('/start'))
 
-        assert any('Rillza VPN' in text for text in session.sent_texts())
+        assert any('Rillza Access' in text for text in session.sent_texts())
         assert any('3 дня бесплатно' in text for text in button_texts(session))
 
     async def test_group_chats_are_ignored(

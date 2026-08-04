@@ -60,9 +60,9 @@ class NotificationService:
                 ):
                     # A trial shorter than the horizon lands inside this
                     # window the hour it is granted: "продлите, чтобы не
-                    # остаться без VPN" an hour after a gift reads as a
-                    # scam. The nearer stage still fires, which is the
-                    # nudge that converts. A longer trial keeps both.
+                    # остаться без доступа" an hour after a gift reads
+                    # as a scam. The nearer stage still fires, which is
+                    # the nudge that converts. A longer trial keeps both.
                     continue
                 # Claim the notice before sending: a crash mid-send costs
                 # one reminder, a double send costs trust.

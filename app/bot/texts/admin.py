@@ -7,7 +7,7 @@ from app.bot.texts.ru import format_date, format_left
 from app.core.enums import PaymentStatus
 from app.core.jobs import stale_after
 
-MENU = '🛠 <b>Админка Rillza VPN</b>\n\nВыберите раздел.'
+MENU = '🛠 <b>Админка Rillza Access</b>\n\nВыберите раздел.'
 FIND_USER = '👤 Отправьте Telegram ID или @username пользователя.'
 USER_NOT_FOUND = 'Пользователь не найден.'
 PANEL_UNAVAILABLE = 'Панель не отвечает. Попробуйте ещё раз.'

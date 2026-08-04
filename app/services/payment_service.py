@@ -112,7 +112,10 @@ class PaymentService:
             invoice = await provider.create_invoice(
                 payment_id,
                 amount_kopeks=tariff.price_kopeks,
-                description=f'Rillza VPN — {tariff.title_ru}',
+                # This travels to the payment provider and shows up on
+                # the payer's statement, so it is deliberately the plain
+                # product name and the tariff, nothing else.
+                description=f'Rillza Access — {tariff.title_ru}',
                 ttl_minutes=ttl,
             )
         except PaymentError as error:
