@@ -126,7 +126,7 @@ async def run() -> None:
             'Rillza VPN bot started polling; payment providers: {}',
             ', '.join(providers.available()) or 'none configured',
         )
-        await dispatcher.start_polling(bot)
+        await start_polling(dispatcher, bot)
     finally:
         # The scheduler goes first: closing the bot session under a
         # running job left a resuming broadcast marking its whole
@@ -144,6 +144,20 @@ async def run() -> None:
         await panel.close()
         await providers.close()
         await engine.dispose()
+
+
+async def start_polling(dispatcher, bot) -> None:
+    """Poll until stopped, leaving the bot session for run() to close.
+
+    aiogram closes it inside ``start_polling``'s own finally when
+    ``close_bot_session`` is left at its default of True — and that
+    finally completes before ours begins. So the ordering run() spells
+    out was not actually happening: the session was already closed by
+    the time the scheduler was told to stop, which is precisely the
+    situation that ordering exists to prevent. run() closes it itself,
+    after the scheduler, where the comment says it does.
+    """
+    await dispatcher.start_polling(bot, close_bot_session=False)
 
 
 def main() -> None:
