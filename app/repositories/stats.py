@@ -64,10 +64,20 @@ class StatsRepository:
                 Subscription.status == SubscriptionStatus.ACTIVE
             )
         )
+        # A purchase on top of a trial extends the same row and leaves
+        # origin alone — it records how the subscription started, and
+        # that is history, not status. So origin alone kept every
+        # convert inside the trial figure for ever, on the one line the
+        # operator reads to see whether the funnel works. Anyone who has
+        # paid is no longer on a free trial, whatever the row began as.
+        paid_at_least_once = select(Payment.user_id).where(
+            Payment.status == PaymentStatus.PROVISIONED
+        )
         stats.trial_subscriptions = await self._scalar(
             select(func.count(Subscription.id)).where(
                 Subscription.status == SubscriptionStatus.ACTIVE,
                 Subscription.origin == SubscriptionOrigin.TRIAL,
+                Subscription.user_id.not_in(paid_at_least_once),
             )
         )
         stats.expired_subscriptions = await self._scalar(

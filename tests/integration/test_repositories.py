@@ -430,3 +430,54 @@ async def test_seeded_tariffs_carry_a_device_count(
     assert four.max_devices == 4
     assert four.duration_days == two.duration_days
     assert four.price_kopeks == 20_000
+
+
+class TestTrialCountOnTheStatsScreen:
+    """«Активных подписок: N (из них триалов: M)».
+
+    ``origin`` records how a subscription started and is never rewritten
+    — a purchase on top of a trial extends the same row. Counting on
+    that alone kept every convert in the trial figure for ever, on the
+    one screen the operator reads to see whether the funnel works.
+    Conversion itself was always right: it asks about trial_used_at and
+    a provisioned payment, not about origin.
+    """
+
+    async def test_a_convert_stops_counting_as_a_trial(
+        self, uow: UnitOfWork, seeded_tariffs
+    ) -> None:
+        tariff = seeded_tariffs[0]
+        await make_user(uow, 1)
+        await make_user(uow, 2)
+        # Both took the free trial; only one of them went on to pay.
+        await uow.users.mark_trial_used(1, NOW)
+        await uow.users.mark_trial_used(2, NOW)
+        uow.session.add_all(
+            [
+                make_subscription(1),  # still on the free trial
+                make_subscription(2),  # started as a trial, then paid
+            ]
+        )
+        uow.session.add(
+            make_payment(
+                2,
+                tariff.id,
+                status=PaymentStatus.PROVISIONED,
+                paid_at=NOW,
+                days_applied_at=NOW,
+                target_expires_at=NOW + timedelta(days=30),
+            )
+        )
+        await uow.commit()
+
+        stats = await uow.stats.collect(
+            NOW,
+            NOW - timedelta(days=1),
+            NOW - timedelta(days=7),
+            NOW - timedelta(days=30),
+        )
+
+        assert stats.active_subscriptions == 2
+        assert stats.trial_subscriptions == 1
+        # The conversion figure was never wrong; keep it that way.
+        assert stats.trial_converted == 1
